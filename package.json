@@ -6,6 +6,7 @@
   "scripts": {
     "collect": "node src/cli.js",
     "monitor": "node src/monitor.js",
+    "dashboard": "node src/dashboard.js",
     "test": "node --test"
   },
   "engines": {

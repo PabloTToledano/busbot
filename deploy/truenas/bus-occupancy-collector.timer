@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh tomorrow's and today's bus timetable catalogue
+
+[Timer]
+OnCalendar=*-*-* 00:05:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily bus timetable collection
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=busbot
+Group=busbot
+WorkingDirectory=/opt/bus-bot
+Environment=BUS_DATA_DIR=/srv/bus-bot-data
+ExecStart=/usr/bin/npm run collect

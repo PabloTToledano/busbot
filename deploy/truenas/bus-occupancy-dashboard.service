@@ -1,0 +1,18 @@
+[Unit]
+Description=Bus occupancy dashboard
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=busbot
+Group=busbot
+WorkingDirectory=/opt/bus-bot
+Environment=BUS_DATA_DIR=/srv/bus-bot-data
+Environment=DASHBOARD_PORT=8787
+ExecStart=/usr/bin/npm run dashboard
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
