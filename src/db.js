@@ -139,6 +139,10 @@ export function getRoutes(db, { operator } = {}) {
 export function openDatabase(path) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  // El dashboard, el catálogo y el monitor son procesos independientes. WAL y
+  // un pequeño tiempo de espera permiten que las lecturas no bloqueen las
+  // escrituras cortas de las observaciones (y viceversa).
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 10000;");
   const existing = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'observations'").get();
   // La primera maqueta sólo conocía tres estados. Como no contenía datos reales,
   // la actualizamos de forma segura para poder distinguir un horario de una lectura
