@@ -62,6 +62,8 @@ La base está en `data/bus_occupancy.sqlite`:
 
 Una nueva ejecución actualiza esa misma fila, incluidas plazas libres, ocupadas, evidencia y paradas. No crea una fila adicional aunque el portal entregue un identificador de servicio sólo en una ejecución posterior.
 
+Cuando el checkout muestra un importe explícito, también se guarda `ticket_price_cents` y `ticket_currency` (la tarifa visible para un adulto, sin estimaciones). Si el portal no muestra precio antes del pago, esos campos quedan vacíos.
+
 Estados:
 
 - `available`: se contó un mapa oficial y `total_seats = free_seats + occupied_seats`.

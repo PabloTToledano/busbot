@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import { crossesNight } from "./alsa.js";
+import { ticketPriceFromText } from "./price.js";
 
 const URL = "https://booking.avanzabus.com/web/";
 const STATIONS = {
@@ -102,13 +103,13 @@ export async function collectAvanza({ routes, date, headed = false, trace = fals
         for (const service of services) {
           const serviceId = `avanza-${route.slug ?? `${route.origin}-${route.destination}`}-${date}-${service.departureTime}-${service.arrivalTime}`;
           if (!service.available) {
-            results.push({ observedAt: new Date().toISOString(), operator: route.operator, origin: route.origin, destination: route.destination, serviceDate: date, departureTime: service.departureTime, serviceId, isNightService: true, status: "full_or_unavailable", evidence: service.text, stops: [] });
+            results.push({ observedAt: new Date().toISOString(), operator: route.operator, origin: route.origin, destination: route.destination, serviceDate: date, departureTime: service.departureTime, serviceId, isNightService: true, status: "full_or_unavailable", ...ticketPriceFromText(service.text), evidence: service.text, stops: [] });
             continue;
           }
           const checkoutPage = await context.newPage();
           try {
             const inventory = await readSeatMap(checkoutPage, route, date, service);
-            results.push({ observedAt: new Date().toISOString(), operator: route.operator, origin: route.origin, destination: route.destination, serviceDate: date, departureTime: service.departureTime, serviceId, isNightService: true, status: "available", ...inventory, stops: [] });
+            results.push({ observedAt: new Date().toISOString(), operator: route.operator, origin: route.origin, destination: route.destination, serviceDate: date, departureTime: service.departureTime, serviceId, isNightService: true, status: "available", ...ticketPriceFromText(service.text), ...inventory, stops: [] });
           } catch (error) {
             results.push({ observedAt: new Date().toISOString(), operator: route.operator, origin: route.origin, destination: route.destination, serviceDate: date, departureTime: service.departureTime, serviceId, isNightService: true, status: "error", error: error.message, evidence: service.text, stops: [] });
           } finally { await checkoutPage.close(); }

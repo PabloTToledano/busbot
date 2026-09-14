@@ -7,6 +7,7 @@ import { openDatabase, persistObservation } from "../src/db.js";
 import { crossesNight } from "../src/alsa.js";
 import { currentDateFlixbusText, parseFlixbusTrips } from "../src/flixbus.js";
 import { madridDateTimeEpoch, shouldCheckDeparture } from "../src/time.js";
+import { ticketPriceFromText } from "../src/price.js";
 
 test("clasifica como nocturno cualquier recorrido que cruce la franja nocturna", () => {
   assert.equal(crossesNight("21:30", "12:30"), true);
@@ -30,6 +31,11 @@ test("a departure becomes due ten minutes before its Madrid timetable time", () 
   assert.equal(shouldCheckDeparture({ dueAt: due, now: due }), true);
   assert.equal(shouldCheckDeparture({ dueAt: due, now: due - 1 }), false);
   assert.equal(shouldCheckDeparture({ dueAt: due, now: due + 6 * 60_000 }), false);
+});
+
+test("reads an explicit EUR fare as integer cents", () => {
+  assert.deepEqual(ticketPriceFromText("Tarifa básica 19,95 €"), { ticketPriceCents: 1995, ticketCurrency: "EUR" });
+  assert.deepEqual(ticketPriceFromText("Sin precio"), {});
 });
 
 test("persiste plazas y paradas como una observación atómica", () => {

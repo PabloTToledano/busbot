@@ -33,7 +33,7 @@ export async function runDueChecks(db, { date = madridToday(), graceMinutes = 5,
     ON CONFLICT(service_key) DO UPDATE SET claimed_at = excluded.claimed_at
     WHERE departure_checks.checked_at IS NULL AND (departure_checks.claimed_at IS NULL OR departure_checks.claimed_at < ?)`);
   const complete = db.prepare("UPDATE departure_checks SET checked_at = ?, outcome = ?, error_message = ? WHERE service_key = ?");
-  const observation = db.prepare("SELECT status, error_message, total_seats, free_seats, occupied_seats FROM observations WHERE service_key = ?");
+  const observation = db.prepare("SELECT status, error_message, total_seats, free_seats, occupied_seats, ticket_price_cents, ticket_currency FROM observations WHERE service_key = ?");
   const results = [];
   for (const service of due) {
     const dueAt = new Date(madridDateTimeEpoch(service.service_date, service.departure_time) - 10 * 60_000).toISOString();
@@ -44,7 +44,7 @@ export async function runDueChecks(db, { date = madridToday(), graceMinutes = 5,
     const outcome = refresh.ok ? latest?.status ?? "error" : "error";
     const error = refresh.ok ? latest?.error_message ?? null : refresh.error;
     complete.run(timestamp(), outcome, error, service.service_key);
-    results.push({ ...service, status: outcome, seatsTotal: latest?.total_seats ?? null, seatsFree: latest?.free_seats ?? null, seatsOccupied: latest?.occupied_seats ?? null, error });
+    results.push({ ...service, status: outcome, seatsTotal: latest?.total_seats ?? null, seatsFree: latest?.free_seats ?? null, seatsOccupied: latest?.occupied_seats ?? null, ticketPriceCents: latest?.ticket_price_cents ?? null, ticketCurrency: latest?.ticket_currency ?? null, error });
   }
   return results;
 }

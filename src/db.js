@@ -179,6 +179,8 @@ export function openDatabase(path) {
       total_seats INTEGER,
       free_seats INTEGER,
       occupied_seats INTEGER,
+      ticket_price_cents INTEGER,
+      ticket_currency TEXT,
       raw_evidence TEXT,
       error_message TEXT
     );
@@ -221,6 +223,12 @@ export function openDatabase(path) {
   const observationColumns = db.prepare("PRAGMA table_info(observations)").all().map((column) => column.name);
   if (!observationColumns.includes("service_key")) {
     db.exec("ALTER TABLE observations ADD COLUMN service_key TEXT;");
+  }
+  if (!observationColumns.includes("ticket_price_cents")) {
+    db.exec("ALTER TABLE observations ADD COLUMN ticket_price_cents INTEGER;");
+  }
+  if (!observationColumns.includes("ticket_currency")) {
+    db.exec("ALTER TABLE observations ADD COLUMN ticket_currency TEXT;");
   }
   const departureCheckColumns = db.prepare("PRAGMA table_info(departure_checks)").all().map((column) => column.name);
   if (!departureCheckColumns.includes("claimed_at")) {
@@ -265,8 +273,8 @@ export function persistObservation(db, observation) {
   const insert = db.prepare(`
     INSERT INTO observations (
       observed_at, operator, origin, destination, service_date, departure_time,
-      service_id, service_key, status, is_night_service, total_seats, free_seats, occupied_seats, raw_evidence, error_message
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      service_id, service_key, status, is_night_service, total_seats, free_seats, occupied_seats, ticket_price_cents, ticket_currency, raw_evidence, error_message
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(service_key) DO UPDATE SET
       observed_at = excluded.observed_at,
       operator = excluded.operator,
@@ -280,6 +288,8 @@ export function persistObservation(db, observation) {
       total_seats = excluded.total_seats,
       free_seats = excluded.free_seats,
       occupied_seats = excluded.occupied_seats,
+      ticket_price_cents = excluded.ticket_price_cents,
+      ticket_currency = excluded.ticket_currency,
       raw_evidence = excluded.raw_evidence,
       error_message = excluded.error_message
   `);
@@ -287,7 +297,8 @@ export function persistObservation(db, observation) {
     observation.observedAt, observation.operator, observation.origin, observation.destination,
     observation.serviceDate, departureTime || null, observation.serviceId ?? null, serviceKey,
     observation.status, observation.isNightService ? 1 : 0, observation.totalSeats ?? null, observation.freeSeats ?? null,
-    observation.occupiedSeats ?? null, observation.evidence ?? null, observation.error ?? null,
+    observation.occupiedSeats ?? null, observation.ticketPriceCents ?? null, observation.ticketCurrency ?? null,
+    observation.evidence ?? null, observation.error ?? null,
   );
   const observationId = Number(db.prepare("SELECT id FROM observations WHERE service_key = ?").get(serviceKey).id);
   db.prepare("DELETE FROM observation_stops WHERE observation_id = ?").run(observationId);

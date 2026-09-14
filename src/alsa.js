@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { ticketPriceFromText } from "./price.js";
 
 const routeUrl = (slug) => `https://www.alsa.es/es/ruta/${slug}`;
 const NIGHT_START = 22 * 60;
@@ -85,6 +86,7 @@ async function readAlsaSeatAvailability(page, { slug, date, departureTime, arriv
     return { status: "full_or_unavailable", evidence: "La expedición no aparece como seleccionable en el flujo de compra de ALSA" };
   }
   const cardText = normalise(await selectedCard.innerText());
+  const fare = ticketPriceFromText(cardText);
   if (/no hay plazas disponibles/i.test(cardText)) {
     return { status: "full_or_unavailable", evidence: cardText };
   }
@@ -130,6 +132,7 @@ async function readAlsaSeatAvailability(page, { slug, date, departureTime, arriv
     totalSeats,
     freeSeats: inventory.free,
     occupiedSeats: inventory.occupied,
+    ...fare,
     evidence: `ALSA seat map: total=${totalSeats}; free=${inventory.free}; occupied=${inventory.occupied}`,
   };
 }
