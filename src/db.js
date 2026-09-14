@@ -199,14 +199,6 @@ export function openDatabase(path) {
     CREATE INDEX IF NOT EXISTS idx_routes_operator
       ON routes(operator);
   `);
-  // FlixBus is deliberately out of scope. Keep neither catalogue entries nor
-  // historic readings, so it cannot reappear in later reports or monitoring.
-  db.exec(`
-    DELETE FROM observation_stops WHERE observation_id IN (SELECT id FROM observations WHERE lower(operator) = 'flixbus');
-    DELETE FROM departure_checks WHERE service_key LIKE 'flixbus|%';
-    DELETE FROM observations WHERE lower(operator) = 'flixbus';
-    DELETE FROM routes WHERE lower(operator) = 'flixbus';
-  `);
   // The observation identity is enforced by an index created later in this
   // migration. SQLite foreign keys cannot target it at this point, so replace
   // only the short-lived monitor ledger created by older versions.
