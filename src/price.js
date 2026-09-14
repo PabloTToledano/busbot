@@ -2,12 +2,12 @@
 // amount. Prices are stored as integer cents to avoid floating-point rounding.
 export function ticketPriceFromText(text) {
   const compact = String(text ?? "").replace(/\s+/g, " ");
-  const match = compact.match(/(?:€\s*([0-9]+(?:[.,][0-9]{1,2})?)|([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:€|EUR\b))/i);
-  const raw = match?.[1] ?? match?.[2];
-  if (!raw) return {};
-  const value = Number(raw.replace(",", "."));
-  if (!Number.isFinite(value) || value < 0) return {};
-  return { ticketPriceCents: Math.round(value * 100), ticketCurrency: "EUR" };
+  const amounts = [...compact.matchAll(/(?:€\s*([0-9]+(?:[.,][0-9]{1,2})?)|([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:€|EUR\b))/gi)]
+    .map((match) => Number((match[1] ?? match[2]).replace(",", ".")))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (!amounts.length) return {};
+  // ALSA renders a crossed-out/list fare followed by its selectable fare.
+  return { ticketPriceCents: Math.round(Math.min(...amounts) * 100), ticketCurrency: "EUR" };
 }
 
 export function ticketPriceFromRate(rate) {

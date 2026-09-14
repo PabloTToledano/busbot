@@ -137,53 +137,44 @@ async function readAlsaSeatAvailability(page, { slug, date, departureTime, arriv
   };
 }
 
+function nextWeek(date) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + 7);
+  return value.toISOString().slice(0, 10);
+}
+
+async function listCheckoutServices(page, { slug, date, limit = Infinity }) {
+  await page.goto(routeUrl(slug), { waitUntil: "domcontentloaded", timeout: 45_000 });
+  await setAlsaDate(page, date);
+  await page.locator("#journeySearchFormButtonjs").dispatchEvent("click");
+  await page.waitForTimeout(3_500);
+  const cards = page.locator("purchase-journey-card");
+  const services = [];
+  for (let index = 0; index < await cards.count() && services.length < limit; index += 1) {
+    const text = normalise(await cards.nth(index).innerText());
+    const times = [...text.matchAll(/\b\d{1,2}:\d{2}\b/g)].map((match) => match[0]);
+    const [departureTime, arrivalTime] = times;
+    if (!departureTime || !arrivalTime || !crossesNight(departureTime, arrivalTime)) continue;
+    services.push({ departureTime, arrivalTime, text, ...ticketPriceFromText(text) });
+  }
+  return services;
+}
+
 async function readRoute(page, { slug, operator, origin, destination, date, limit = Infinity }) {
-    await page.goto(routeUrl(slug), { waitUntil: "domcontentloaded", timeout: 45_000 });
-    await setAlsaDate(page, date);
-    await delay(2_500);
-    const showMore = page.getByText("Mostrar más", { exact: true });
-    let previousRowCount = 0;
-    for (let attempt = 0; attempt < 10 && await showMore.isVisible().catch(() => false); attempt += 1) {
-      const before = await page.locator("#schedulesTable tr[id^='itinerary']").count();
-      await showMore.click();
-      await delay(300);
-      const after = await page.locator("#schedulesTable tr[id^='itinerary']").count();
-      if (after <= before || after === previousRowCount) break;
-      previousRowCount = after;
-    }
-    const rows = page.locator("#schedulesTable tr[id^='itinerary']");
+    const services = await listCheckoutServices(page, { slug, date, limit });
     const result = [];
-    for (let index = 0; index < await rows.count() && result.length < limit; index += 1) {
-      const row = rows.nth(index);
-      const values = (await row.locator("td").allTextContents()).map(normalise);
-      const departureTime = values[0];
-      const arrivalTime = values[1];
-      if (!/^\d{1,2}:\d{2}$/.test(departureTime) || !/^\d{1,2}:\d{2}$/.test(arrivalTime)) continue;
-      if (!crossesNight(departureTime, arrivalTime)) continue;
-      // El mapa desplegado de la fila anterior puede superponerse al enlace
-      // siguiente. El manejador Angular no requiere un clic físico.
-      await row.locator("a.itinerary").dispatchEvent("click");
-      // El detalle se carga de forma asíncrona desde el propio portal.
-      await delay(1_200);
-      const details = page.locator(`#itineraryContainer${index}`);
-      const detailText = await details.innerText().catch(() => row.innerText());
-      const evidence = normalise(detailText);
-      result.push({
+    for (const service of services) {
+      const item = {
         observedAt: new Date().toISOString(), operator, origin, destination,
-        serviceDate: date, departureTime, serviceId: `alsa-${slug}-${departureTime}-${arrivalTime}`,
-        status: "schedule_only", isNightService: true,
-        evidence, stops: extractStops(detailText),
-      });
-    }
-    // La página pública sólo tiene horarios. Para los nocturnos, avanzamos al
-    // selector de asientos y sustituimos el registro de horario por el aforo
-    // real cuando el portal expone un mapa completo.
-    for (const item of result.filter((item) => item.isNightService)) {
+        serviceDate: date, departureTime: service.departureTime,
+        serviceId: `alsa-${slug}-${service.departureTime}-${service.arrivalTime}`,
+        status: /no hay plazas disponibles/i.test(service.text) ? "full_or_unavailable" : "schedule_only",
+        isNightService: true, ...ticketPriceFromText(service.text), evidence: service.text, stops: [],
+      };
       const occupancyPage = await page.context().newPage();
       try {
-        const arrivalTime = item.serviceId.split("-").at(-1);
         const inventory = await readAlsaSeatAvailability(occupancyPage, {
-          slug, date, departureTime: item.departureTime, arrivalTime,
+          slug, date, departureTime: service.departureTime, arrivalTime: service.arrivalTime,
         });
         if (inventory) Object.assign(item, inventory);
       } catch (error) {
@@ -191,8 +182,18 @@ async function readRoute(page, { slug, operator, origin, destination, date, limi
       } finally {
         await occupancyPage.close();
       }
+      if (item.status === "full_or_unavailable" && item.ticketPriceCents == null) {
+        const referenceDate = nextWeek(date);
+        const pricePage = await page.context().newPage();
+        try {
+          const future = await listCheckoutServices(pricePage, { slug, date: referenceDate });
+          const comparable = future.find((candidate) => candidate.departureTime === service.departureTime && candidate.ticketPriceCents != null);
+          if (comparable) Object.assign(item, comparable, { priceReferenceDate: referenceDate });
+        } finally { await pricePage.close(); }
+      }
+      result.push(item);
     }
-    return result.filter((item) => item.isNightService);
+    return result;
 }
 
 async function withAlsaBrowser({ headed, trace, traceName }, work) {
