@@ -28,7 +28,7 @@ npm run collect -- --operator alsa --route malaga-valencia --date 2026-09-14
 npm run collect -- --operator cevesa --date 2026-09-14
 ```
 
-Los operadores configurados son Alsa, Avanza, Busbam, FlixBus, Interbus, Monbus, Movelia/Moventis, Socibus, Secorbus, Vibasa y Jiménez Dorado/Cevesa. `--operator all` es el valor predeterminado.
+Los operadores configurados son Alsa, Avanza, Busbam, Interbus, Monbus, Movelia/Moventis, Socibus, Secorbus, Vibasa y Jiménez Dorado/Cevesa. `--operator all` es el valor predeterminado.
 
 La salida JSON muestra únicamente las expediciones que cruzan la franja 22:00–06:00. `--headed` abre el navegador para diagnóstico y `--trace` guarda una traza Playwright.
 
@@ -40,7 +40,7 @@ Primero recoge el catálogo de salidas del día; el monitor usa esas expedicione
 npm run monitor -- --date 2026-09-14
 ```
 
-Cada 30 segundos localiza las salidas nocturnas entre T−10 y T−5 minutos, vuelve a abrir el checkout oficial y actualiza la misma fila SQLite con las plazas libres y ocupadas. FlixBus queda excluido. `departure_checks` evita revisar dos veces una salida y recupera un intento interrumpido tras 15 minutos. Para una prueba única:
+Cada 30 segundos localiza las salidas nocturnas entre T−10 y T−5 minutos, vuelve a abrir el checkout oficial y actualiza la misma fila SQLite con las plazas libres y ocupadas. `departure_checks` evita revisar dos veces una salida y recupera un intento interrumpido tras 15 minutos. Para una prueba única:
 
 ```powershell
 npm run monitor -- --date 2026-09-14 --once
@@ -71,7 +71,7 @@ Estados:
 - `schedule_only`: hay horario, pero no hay mapa seleccionable; no se infiere capacidad de textos comerciales ni agregados.
 - `error`: fallo técnico transitorio o inesperado del portal.
 
-Algunos operadores pueden impedir el acceso al mapa. Por ejemplo, FlixBus puede exigir CAPTCHA tras elegir una salida; el recolector registra esa evidencia como `schedule_only` y nunca intenta resolverlo ni inventa ocupación.
+Algunos operadores pueden impedir el acceso al mapa. En ese caso se guarda `schedule_only` y nunca se inventa ocupación.
 
 Si el DNS local no resuelve el API de Monbus, el colector usa automáticamente DNS-over-HTTPS como respaldo para esa conexión, sin cambiar la configuración de red del equipo.
 

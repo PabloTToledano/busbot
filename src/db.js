@@ -49,13 +49,6 @@ export const DEFAULT_ROUTES = [
   { operator: "Alsa", origin: "Cáceres", destination: "Gijón", slug: "caceres-gijon" },
   { operator: "Alsa", origin: "Cáceres", destination: "Oviedo", slug: "caceres-oviedo" },
   { operator: "Socibus", origin: "Sevilla", destination: "Madrid", slug: "sevilla-madrid" },
-  { operator: "FlixBus", origin: "Sevilla", destination: "Lisboa", slug: "sevilla-lisboa" },
-  { operator: "FlixBus", origin: "Madrid", destination: "Lisboa", slug: "madrid-lisboa" },
-  { operator: "FlixBus", origin: "Barcelona", destination: "Lyon", slug: "barcelona-lyon" },
-  { operator: "FlixBus", origin: "Barcelona", destination: "Marsella", slug: "barcelona-marsella" },
-  { operator: "FlixBus", origin: "Barcelona", destination: "Toulouse", slug: "barcelona-toulouse" },
-  { operator: "FlixBus", origin: "Barcelona", destination: "Ginebra", slug: "barcelona-ginebra" },
-  { operator: "FlixBus", origin: "Bilbao", destination: "París", slug: "bilbao-paris" },
   { operator: "Alsa", origin: "Sevilla", destination: "Barcelona", slug: "sevilla-barcelona" },
   { operator: "Alsa", origin: "Sevilla", destination: "Almería", slug: "sevilla-almeria" },
   { operator: "Alsa", origin: "Sevilla", destination: "Córdoba", slug: "sevilla-cordoba" },
@@ -65,6 +58,8 @@ export const DEFAULT_ROUTES = [
   { operator: "Alsa", origin: "Sevilla", destination: "Lisboa", slug: "sevilla-lisboa" },
   { operator: "Alsa", origin: "Madrid", destination: "Lisboa", slug: "madrid-lisboa" },
   { operator: "Alsa", origin: "Salamanca", destination: "Lisboa", slug: "salamanca-lisboa" },
+  { operator: "Alsa", origin: "Salamanca", destination: "Madrid", slug: "salamanca-madrid" },
+  { operator: "Alsa", origin: "Salamanca", destination: "Valladolid", slug: "salamanca-valladolid" },
   { operator: "Alsa", origin: "Badajoz", destination: "Lisboa", slug: "badajoz-lisboa" },
   { operator: "Alsa", origin: "Barcelona", destination: "Lisboa", slug: "barcelona-lisboa" },
   { operator: "Alsa", origin: "San Sebastián", destination: "Lisboa", slug: "san-sebastian-lisboa" },
@@ -202,6 +197,14 @@ export function openDatabase(path) {
       ON observations(operator, origin, destination, service_date, observed_at);
     CREATE INDEX IF NOT EXISTS idx_routes_operator
       ON routes(operator);
+  `);
+  // FlixBus is deliberately out of scope. Keep neither catalogue entries nor
+  // historic readings, so it cannot reappear in later reports or monitoring.
+  db.exec(`
+    DELETE FROM observation_stops WHERE observation_id IN (SELECT id FROM observations WHERE lower(operator) = 'flixbus');
+    DELETE FROM departure_checks WHERE service_key LIKE 'flixbus|%';
+    DELETE FROM observations WHERE lower(operator) = 'flixbus';
+    DELETE FROM routes WHERE lower(operator) = 'flixbus';
   `);
   // The observation identity is enforced by an index created later in this
   // migration. SQLite foreign keys cannot target it at this point, so replace

@@ -83,7 +83,7 @@ async function readAlsaSeatAvailability(page, { slug, date, departureTime, arriv
     }
   }
   if (!selectedCard) {
-    return { status: "full_or_unavailable", evidence: "La expedición no aparece como seleccionable en el flujo de compra de ALSA" };
+    return { status: "schedule_only", evidence: "La expedición no aparece como seleccionable en el flujo de compra de ALSA" };
   }
   const cardText = normalise(await selectedCard.innerText());
   const fare = ticketPriceFromText(cardText);
@@ -153,12 +153,13 @@ async function readRoute(page, { slug, operator, origin, destination, date, limi
     }
     const rows = page.locator("#schedulesTable tr[id^='itinerary']");
     const result = [];
-    for (let index = 0; index < Math.min(await rows.count(), limit); index += 1) {
+    for (let index = 0; index < await rows.count() && result.length < limit; index += 1) {
       const row = rows.nth(index);
       const values = (await row.locator("td").allTextContents()).map(normalise);
       const departureTime = values[0];
       const arrivalTime = values[1];
       if (!/^\d{1,2}:\d{2}$/.test(departureTime) || !/^\d{1,2}:\d{2}$/.test(arrivalTime)) continue;
+      if (!crossesNight(departureTime, arrivalTime)) continue;
       // El mapa desplegado de la fila anterior puede superponerse al enlace
       // siguiente. El manejador Angular no requiere un clic físico.
       await row.locator("a.itinerary").dispatchEvent("click");
@@ -170,7 +171,7 @@ async function readRoute(page, { slug, operator, origin, destination, date, limi
       result.push({
         observedAt: new Date().toISOString(), operator, origin, destination,
         serviceDate: date, departureTime, serviceId: `alsa-${slug}-${departureTime}-${arrivalTime}`,
-        status: "schedule_only", isNightService: crossesNight(departureTime, arrivalTime),
+        status: "schedule_only", isNightService: true,
         evidence, stops: extractStops(detailText),
       });
     }

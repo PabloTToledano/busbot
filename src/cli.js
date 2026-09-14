@@ -3,7 +3,6 @@ import { collectInterbus } from "./interbus.js";
 import { collectAlsaMalagaValencia, collectAlsaRoutes, collectAlsaSchedule } from "./alsa.js";
 import { getRoutes, openDatabase, persistObservation } from "./db.js";
 import { collectMoveliaRoutes } from "./movelia.js";
-import { collectFlixbusRoutes } from "./flixbus.js";
 import { collectSocibus } from "./socibus.js";
 import { collectAvanza } from "./avanza.js";
 import { collectMonbus } from "./monbus.js";
@@ -34,7 +33,7 @@ const routeFilter = option("--route")
   ?.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() ?? null;
 
 if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-  console.error("Uso: npm run collect -- [--operator interbus|alsa|flixbus|socibus|secorbus|avanza|monbus|vibasa|movelia|busbam|jiménez dorado/cevesa|all|alsa-valencia] [--date AAAA-MM-DD] [--route Origen-Destino] [--limit N] [--headed] [--trace]");
+  console.error("Uso: npm run collect -- [--operator interbus|alsa|socibus|secorbus|avanza|monbus|vibasa|movelia|busbam|jiménez dorado/cevesa|all|alsa-valencia] [--date AAAA-MM-DD] [--route Origen-Destino] [--limit N] [--headed] [--trace]");
   process.exit(2);
 }
 
@@ -73,13 +72,6 @@ try {
         console.log(`[Alsa] Consultando ${alsaRoutes.length} rutas para ${date}...`);
         const res = await collectAlsaRoutes({ routes: alsaRoutes, date, headed, trace, limit });
         rows.push(...res);
-      }
-    }
-    if (operator === "flixbus" || operator === "all") {
-      const flixbusRoutes = filterRoutes(getRoutes(db, { operator: "FlixBus" }));
-      if (flixbusRoutes.length > 0) {
-        console.log(`[FlixBus] Consultando ${flixbusRoutes.length} rutas para ${date}...`);
-        rows.push(...await collectFlixbusRoutes({ routes: flixbusRoutes, date, headed, trace, limit }));
       }
     }
     if (operator === "socibus" || operator === "all") {
@@ -126,7 +118,7 @@ try {
       }
     }
     if (operator === "all" || getRoutes(db).some((r) => r.operator.toLowerCase() === operator)) {
-      const moveliaRoutes = filterRoutes(getRoutes(db)).filter((r) => !["alsa", "interbus", "flixbus", "socibus", "secorbus", "avanza", "monbus", "vibasa", "jiménez dorado/cevesa"].includes(r.operator.toLowerCase()));
+      const moveliaRoutes = filterRoutes(getRoutes(db)).filter((r) => !["alsa", "interbus", "socibus", "secorbus", "avanza", "monbus", "vibasa", "jiménez dorado/cevesa"].includes(r.operator.toLowerCase()));
       const selected = operator === "all" ? moveliaRoutes : moveliaRoutes.filter((r) => r.operator.toLowerCase() === operator);
       if (selected.length > 0) {
         console.log(`[Movelia] Consultando ${selected.length} rutas para ${date}...`);

@@ -2,7 +2,7 @@
 // amount. Prices are stored as integer cents to avoid floating-point rounding.
 export function ticketPriceFromText(text) {
   const compact = String(text ?? "").replace(/\s+/g, " ");
-  const match = compact.match(/(?:€\s*([0-9]+(?:[.,][0-9]{1,2})?)|([0-9]+(?:[.,][0-9]{1,2})?)\s*€)/);
+  const match = compact.match(/(?:€\s*([0-9]+(?:[.,][0-9]{1,2})?)|([0-9]+(?:[.,][0-9]{1,2})?)\s*(?:€|EUR\b))/i);
   const raw = match?.[1] ?? match?.[2];
   if (!raw) return {};
   const value = Number(raw.replace(",", "."));

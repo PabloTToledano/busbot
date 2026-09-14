@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import { crossesNight } from "./alsa.js";
+import { ticketPriceFromText } from "./price.js";
 
 const URL = "https://compra.socibus.es/online/search";
 const PAUSE_MS = 700;
@@ -108,6 +109,7 @@ async function collectSocibusRoute(page, { origin, destination, date, operator }
         observations.push({
           observedAt: new Date().toISOString(), operator, origin, destination,
           serviceDate: date, departureTime, serviceId, isNightService, stops: [],
+          ...ticketPriceFromText(text),
           ...(seatMap ?? { status: freeFromSchedule === 0 ? "full_or_unavailable" : "schedule_only", evidence: text }),
           status: seatMap ? "available" : freeFromSchedule === 0 ? "full_or_unavailable" : "schedule_only",
         });

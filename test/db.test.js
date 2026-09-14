@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase, persistObservation } from "../src/db.js";
 import { crossesNight } from "../src/alsa.js";
-import { currentDateFlixbusText, parseFlixbusTrips } from "../src/flixbus.js";
 import { madridDateTimeEpoch, shouldCheckDeparture } from "../src/time.js";
 import { ticketPriceFromText } from "../src/price.js";
 
@@ -14,17 +13,6 @@ test("clasifica como nocturno cualquier recorrido que cruce la franja nocturna",
   assert.equal(crossesNight("08:00", "19:15"), false);
 });
 
-test("extrae expediciones concretas del buscador de FlixBus", () => {
-  const trips = parseFlixbusTrips("Hora de salida: 23:55 Duración: 6:40 h Hora de llegada: 05:35 +1 día Autobús Directo");
-  assert.deepEqual(trips, [{ departureTime: "23:55", arrivalTime: "05:35", duration: 400, occupancyHint: null }]);
-});
-
-test("FlixBus no atribuye al día consultado los viajes de madrugada del siguiente", () => {
-  const text = "Hora de salida: 23:55 Duración: 7:50 h Hora de llegada: 06:45 +1 día Viajes después de la medianoche Hora de salida: 00:55 Duración: 7:50 h Hora de llegada: 07:45";
-  assert.deepEqual(parseFlixbusTrips(currentDateFlixbusText(text)), [
-    { departureTime: "23:55", arrivalTime: "06:45", duration: 470, occupancyHint: null },
-  ]);
-});
 
 test("a departure becomes due ten minutes before its Madrid timetable time", () => {
   const due = madridDateTimeEpoch("2026-09-14", "22:05") - 10 * 60_000;

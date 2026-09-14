@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import { crossesNight } from "./alsa.js";
+import { ticketPriceFromText } from "./price.js";
 
 const URL = "https://comprasweb.interbus.es/venta/";
 const PAUSE_MS = 800;
@@ -167,6 +168,7 @@ async function collectInterbusRoute(page, { origin, destination, date, operator 
           serviceDate: date, departureTime,
           serviceId: `interbus-${forInterbusAutocomplete(origin).toLowerCase()}-${forInterbusAutocomplete(destination).toLowerCase()}-${departureTime}-${arrivalTime}`,
           isNightService, stops: [],
+          ...ticketPriceFromText(departureText),
           ...(seatMap ?? { status: available && Number(available[1]) === 0 ? "full_or_unavailable" : "schedule_only", evidence: departureText }),
           status: seatMap ? "available" : available && Number(available[1]) === 0 ? "full_or_unavailable" : "schedule_only",
         });
