@@ -1,0 +1,84 @@
+# Monitor de ocupación de autobuses
+
+Recolector local y de sólo lectura de rutas nocturnas. Entra en el flujo público de compra de cada operador y sólo guarda ocupación cuando puede contar el plano de asientos seleccionable. Los resultados se guardan en SQLite.
+
+## Instalación
+
+```powershell
+cd C:\Users\pablo\Desktop\Projects\bus-bot
+npm install
+npx playwright install chromium
+```
+
+Requiere Node.js 22 o posterior y conexión a Internet.
+
+## Consultas
+
+```powershell
+# Todas las rutas configuradas, para hoy
+npm run collect
+
+# Un operador y una fecha concreta
+npm run collect -- --operator avanza --date 2026-09-14
+
+# Una ruta concreta; se admiten nombres sin tildes
+npm run collect -- --operator alsa --route malaga-valencia --date 2026-09-14
+
+# Alias comercial de Jiménez Dorado/Cevesa
+npm run collect -- --operator cevesa --date 2026-09-14
+```
+
+Los operadores configurados son Alsa, Avanza, Busbam, FlixBus, Interbus, Monbus, Movelia/Moventis, Socibus, Secorbus, Vibasa y Jiménez Dorado/Cevesa. `--operator all` es el valor predeterminado.
+
+La salida JSON muestra únicamente las expediciones que cruzan la franja 22:00–06:00. `--headed` abre el navegador para diagnóstico y `--trace` guarda una traza Playwright.
+
+## Comprobación automática a diez minutos de la salida
+
+Primero recoge el catálogo de salidas del día; el monitor usa esas expediciones ya descubiertas. Después déjalo en ejecución:
+
+```powershell
+npm run monitor -- --date 2026-09-14
+```
+
+Cada 30 segundos localiza las salidas nocturnas entre T−10 y T−5 minutos, vuelve a abrir el checkout oficial y actualiza la misma fila SQLite con las plazas libres y ocupadas. FlixBus queda excluido. `departure_checks` evita revisar dos veces una salida y recupera un intento interrumpido tras 15 minutos. Para una prueba única:
+
+```powershell
+npm run monitor -- --date 2026-09-14 --once
+```
+
+Se puede ajustar el intervalo y la tolerancia con `--poll-seconds 30` y `--grace-minutes 5`.
+
+## TrueNAS SCALE (Containers experimental)
+
+Para desplegarlo como contenedor Linux LXC —no como una App ni una imagen Docker— sigue [la guía de despliegue](deploy/truenas/README.md). El estado SQLite se almacena en un dataset montado y el monitor se inicia mediante `systemd`.
+
+## Datos y actualización
+
+La base está en `data/bus_occupancy.sqlite`:
+
+- `routes`: rutas configuradas, sin horarios fijos.
+- `observations`: una fila por operador, origen, destino, fecha y hora de salida.
+- `observation_stops`: paradas de la observación.
+
+Una nueva ejecución actualiza esa misma fila, incluidas plazas libres, ocupadas, evidencia y paradas. No crea una fila adicional aunque el portal entregue un identificador de servicio sólo en una ejecución posterior.
+
+Estados:
+
+- `available`: se contó un mapa oficial y `total_seats = free_seats + occupied_seats`.
+- `full_or_unavailable`: el portal confirma que no hay plazas o no permite seleccionar esa expedición.
+- `schedule_only`: hay horario, pero no hay mapa seleccionable; no se infiere capacidad de textos comerciales ni agregados.
+- `error`: fallo técnico transitorio o inesperado del portal.
+
+Algunos operadores pueden impedir el acceso al mapa. Por ejemplo, FlixBus puede exigir CAPTCHA tras elegir una salida; el recolector registra esa evidencia como `schedule_only` y nunca intenta resolverlo ni inventa ocupación.
+
+Si el DNS local no resuelve el API de Monbus, el colector usa automáticamente DNS-over-HTTPS como respaldo para esa conexión, sin cambiar la configuración de red del equipo.
+
+## Verificación
+
+```powershell
+npm test
+```
+
+## Límites operativos
+
+No se inicia sesión, no se reservan plazas, no se añaden pasajeros y no se avanza al pago. Revisa las condiciones de uso de cada operador antes de programar ejecuciones periódicas.

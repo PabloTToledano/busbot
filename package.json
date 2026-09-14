@@ -1,0 +1,17 @@
+{
+  "name": "bus-occupancy-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "collect": "node src/cli.js",
+    "monitor": "node src/monitor.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}
