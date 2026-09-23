@@ -16,7 +16,7 @@ function rowsForDashboard() {
       o.observed_at, d.checked_at, d.outcome
     FROM observations o
     LEFT JOIN departure_checks d ON d.service_key = o.service_key
-    WHERE o.service_date >= ? AND o.is_night_service = 1
+    WHERE o.service_date >= ?
     ORDER BY o.service_date, o.departure_time
   `).all(date).map((row) => ({
     ...row,
@@ -46,8 +46,12 @@ function rowsForDashboard() {
     ORDER BY detected_at DESC
     LIMIT 100
   `).all();
+  const xPosts = db.prepare(`
+    SELECT event_type, event_key, message, status, created_at, sent_at, post_id, error_message
+    FROM x_post_outbox ORDER BY id DESC LIMIT 100
+  `).all();
   const byStatus = db.prepare("SELECT status, count(*) AS count FROM observations WHERE service_date = ? GROUP BY status").all(date);
-  return { date, routeCount, plannedRoutes, byStatus, services, renfeTrains, renfeAlerts, generatedAt: new Date().toISOString() };
+  return { date, routeCount, plannedRoutes, byStatus, services, renfeTrains, renfeAlerts, xPosts, generatedAt: new Date().toISOString() };
 }
 
 const page = `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bus monitor</title>
@@ -63,8 +67,9 @@ const page = `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="v
 <section><h2>Próximas comprobaciones (T−10 min)</h2><table><thead><tr><th>Ruta</th><th>Salida</th><th>Pull previsto</th><th>Estado</th></tr></thead><tbody id="upcoming"></tbody></table></section>
 <section><h2>Rutas planificadas para cachear</h2><div class="controls"><input id="route-search" type="search" placeholder="Buscar operador, origen o destino…"><select id="operator-filter"><option value="">Todos los operadores</option></select></div><div class="muted" id="route-total"></div><table><thead><tr><th>Operador</th><th>Origen</th><th>Destino</th></tr></thead><tbody id="planned-routes"></tbody></table></section>
 <section><h2>Trenes Renfe observados</h2><p class="muted">Se consulta el feed oficial cada minuto. Las llegadas previstas después de las 00:00 y antes de las 06:00 se preparan para enviar mediante el bot de X.</p><div class="muted" id="renfe-total"></div><table><thead><tr><th>Tren</th><th>Circulación</th><th>Trayecto</th><th>Próxima estación</th><th>Llegada estimada</th><th>Retraso informado</th><th>Visto</th></tr></thead><tbody id="renfe-trains"></tbody></table></section>
-<section><h2>Llegadas nocturnas pendientes para X</h2><table><thead><tr><th>Registrada</th><th>Tren</th><th>Estación</th><th>Llegada prevista</th><th>Mensaje en cola</th><th>Estado</th></tr></thead><tbody id="renfe-alerts"></tbody></table></section>
-<section><h2>Lecturas de rutas nocturnas</h2><table><thead><tr><th>Operador</th><th>Ruta</th><th>Salida</th><th>Ocupación</th><th>Precio</th><th>Estado</th><th>Última lectura</th></tr></thead><tbody id="services"></tbody></table></section></main>
+<section><h2>Avisos de llegadas nocturnas Renfe</h2><table><thead><tr><th>Registrada</th><th>Tren</th><th>Estación</th><th>Llegada prevista</th><th>Mensaje</th><th>Estado</th></tr></thead><tbody id="renfe-alerts"></tbody></table></section>
+<section><h2>Publicaciones de X (historial para evitar duplicados)</h2><table><thead><tr><th>Detectada</th><th>Tipo</th><th>Mensaje</th><th>Estado</th><th>Publicada</th><th>Referencia X</th></tr></thead><tbody id="x-posts"></tbody></table></section>
+<section><h2>Lecturas de autobuses</h2><table><thead><tr><th>Operador</th><th>Ruta</th><th>Salida</th><th>Ocupación</th><th>Precio</th><th>Estado</th><th>Última lectura</th></tr></thead><tbody id="services"></tbody></table></section></main>
 <script>
 const fmt = (date) => date ? new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(date)) : '—';
 const esc = (value) => String(value ?? '—').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -75,12 +80,13 @@ let latestData; const routeSearch=document.querySelector('#route-search'), opera
 function renderRoutes(){ if(!latestData) return; const term=routeSearch.value.trim().toLocaleLowerCase('es'); const operator=operatorFilter.value; const routes=latestData.plannedRoutes.filter(r => (!operator || r.operator===operator) && (!term || [r.operator,r.origin,r.destination].join(' ').toLocaleLowerCase('es').includes(term))); document.querySelector('#route-total').textContent=routes.length+' de '+latestData.plannedRoutes.length+' rutas'; document.querySelector('#planned-routes').innerHTML=routes.map(r=>'<tr><td>'+esc(r.operator)+'</td><td>'+esc(r.origin)+'</td><td>'+esc(r.destination)+'</td></tr>').join('')||'<tr><td colspan="3">No hay rutas que coincidan con la búsqueda.</td></tr>'; }
 routeSearch.addEventListener('input',renderRoutes); operatorFilter.addEventListener('change',renderRoutes);
 async function refresh(){ const data=await fetch('/api/dashboard').then(r=>r.json()); const counts=Object.fromEntries(data.byStatus.map(x=>[x.status,x.count])); document.querySelector('#updated').textContent='Datos del '+data.date+' · generado '+fmt(data.generatedAt);
-document.querySelector('#stats').innerHTML=[['Rutas planeadas',data.routeCount],['Expediciones nocturnas',data.services.length],['Con ocupación',counts.available||0],['Llenas',counts.full_or_unavailable||0],['Con precio',data.services.filter(x=>x.ticket_price_cents!=null).length]].map(([k,v])=>'<div class="stat"><span class="muted">'+k+'</span><b>'+v+'</b></div>').join('');
+document.querySelector('#stats').innerHTML=[['Rutas planeadas',data.routeCount],['Expediciones observadas',data.services.length],['Con ocupación',counts.available||0],['Llenas',counts.full_or_unavailable||0],['Con precio',data.services.filter(x=>x.ticket_price_cents!=null).length]].map(([k,v])=>'<div class="stat"><span class="muted">'+k+'</span><b>'+v+'</b></div>').join('');
 const upcoming=data.services.filter(x=>x.dueAt).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).slice(0,20); document.querySelector('#upcoming').innerHTML=upcoming.map(x=>'<tr><td>'+esc(x.origin)+' → '+esc(x.destination)+'</td><td>'+esc(x.service_date)+' '+esc(x.departure_time)+'</td><td>'+fmt(x.dueAt)+'</td><td>'+esc(x.checked_at?'comprobada':'pendiente')+'</td></tr>').join('')||'<tr><td colspan="4">Sin salidas planificadas.</td></tr>';
 const selected=operatorFilter.value; const operators=[...new Set(data.plannedRoutes.map(r=>r.operator))]; operatorFilter.innerHTML='<option value="">Todos los operadores</option>'+operators.map(x=>'<option>'+esc(x)+'</option>').join(''); operatorFilter.value=operators.includes(selected)?selected:''; latestData=data; renderRoutes();
 document.querySelector('#renfe-total').textContent=data.renfeTrains.length+' trenes en el último inventario (máx. 100)';
 document.querySelector('#renfe-trains').innerHTML=data.renfeTrains.map(t=>'<tr><td>'+esc(t.commercial_code||t.circulation_code)+'</td><td>'+esc(t.circulation_code)+'</td><td>'+esc(t.corridor_code)+'</td><td>'+esc(t.next_station_code)+'</td><td>'+esc(t.next_station_arrival_estimate?.replace('T',' '))+'</td><td>'+delayDuration(t.delay_minutes)+'</td><td>'+fmt(t.last_seen_at)+'</td></tr>').join('')||'<tr><td colspan="7">Aún no hay lecturas de Renfe.</td></tr>';
 document.querySelector('#renfe-alerts').innerHTML=data.renfeAlerts.map(a=>'<tr><td>'+fmt(a.detected_at)+'</td><td>'+esc(a.commercial_code||a.circulation_code)+' · '+esc(a.corridor_code)+'</td><td>'+esc(a.next_station_code)+'</td><td>'+esc(a.expected_arrival_at.replace('T',' '))+'</td><td>'+esc(a.notification_text)+'</td><td>'+esc(a.notification_status)+'</td></tr>').join('')||'<tr><td colspan="6">No hay llegadas nocturnas en cola.</td></tr>';
+document.querySelector('#x-posts').innerHTML=data.xPosts.map(p=>'<tr><td>'+fmt(p.created_at)+'</td><td>'+esc(p.event_type==='bus_departure'?'Autobús':'Renfe')+'</td><td>'+esc(p.message)+'</td><td>'+esc(p.status)+(p.error_message?' · '+esc(p.error_message):'')+'</td><td>'+fmt(p.sent_at)+'</td><td>'+esc(p.post_id)+'</td></tr>').join('')||'<tr><td colspan="6">Aún no hay mensajes en cola.</td></tr>';
 document.querySelector('#services').innerHTML=data.services.map(x=>'<tr><td>'+esc(x.operator)+'</td><td>'+esc(x.origin)+' → '+esc(x.destination)+'</td><td>'+esc(x.service_date)+' '+esc(x.departure_time)+'</td><td>'+esc(x.free_seats==null?'—':x.free_seats+'/'+x.total_seats+' libres')+'</td><td>'+price(x)+'</td><td>'+state(x)+'</td><td>'+fmt(x.observed_at)+'</td></tr>').join('')||'<tr><td colspan="7">Aún no hay lecturas.</td></tr>'; }
 refresh(); setInterval(refresh,30000);
 </script>`;

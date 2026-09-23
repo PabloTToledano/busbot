@@ -9,6 +9,7 @@ User=busbot
 Group=busbot
 WorkingDirectory=/opt/bus-bot
 Environment=BUS_DATA_DIR=/srv/bus-bot-data
+EnvironmentFile=-/etc/bus-bot/x.env
 ExecStart=/usr/bin/npm run monitor -- --poll-seconds 30
 Restart=always
 RestartSec=20

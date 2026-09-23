@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { openDatabase } from "./db.js";
+import { publishPendingXPosts, queueXPost } from "./x-publisher.js";
 
 export const RENFE_FEED_URL = "https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json";
 export const DEFAULT_ARRIVAL_WINDOW_END_HOUR = 6;
@@ -126,6 +127,12 @@ export function recordRenfeFeed(db, feed, { now = new Date(), windowEndHour = DE
           formatRenfeArrivalMessage(train),
         );
         arrivalsQueued += Number(result.changes);
+        queueXPost(db, {
+          eventType: "renfe_arrival",
+          eventKey: alertKey,
+          message: formatRenfeArrivalMessage(train),
+          now,
+        });
       }
     }
     db.exec("COMMIT");
@@ -159,7 +166,15 @@ async function main() {
     try {
       const feed = await collectRenfeFeed();
       const result = recordRenfeFeed(db, feed, { windowEndHour });
-      console.log(JSON.stringify({ observedAt: new Date().toISOString(), ...result }));
+      const pendingArrivals = db.prepare(`
+        SELECT alert_key, notification_text FROM renfe_arrival_alerts
+        WHERE notification_status = 'pending'
+      `).all();
+      for (const alert of pendingArrivals) {
+        queueXPost(db, { eventType: "renfe_arrival", eventKey: alert.alert_key, message: alert.notification_text });
+      }
+      const publishing = await publishPendingXPosts(db);
+      console.log(JSON.stringify({ observedAt: new Date().toISOString(), ...result, publishing }));
     } catch (error) {
       console.error(JSON.stringify({ observedAt: new Date().toISOString(), error: error.message }));
     }

@@ -31,6 +31,8 @@ systemctl daemon-reload
 systemctl enable --now bus-occupancy-monitor bus-occupancy-dashboard bus-occupancy-collector.timer renfe-arrival-monitor
 ```
 
+To enable X publishing, create `/etc/bus-bot/x.env` outside the repository and set `X_USER_ACCESS_TOKEN` to an OAuth 2.0 **user** access token for the posting account, with the `tweet.write` scope (an app-only Bearer Token cannot publish). Keep that file restricted to administrators; never commit it or paste its contents into chat. Both monitors load this optional systemd environment file. Without it, qualifying messages remain queued and no tweet is sent.
+
 Before the first evening monitor run, collect that day’s timetable once:
 
 ```sh
@@ -48,4 +50,6 @@ Add a proxy in the container **Proxies** card from host port `8787` to container
 
 The monitor deliberately excludes FlixBus. It never exposes a port, and no privileged mode, Docker nesting, or host networking is needed.
 
-`renfe-arrival-monitor` independently reads the official Renfe long-distance fleet JSON every 60 seconds. Each next-station arrival between 00:00 and 06:00 local feed time creates one durable `renfe_arrival_alerts` row per train, station, and date, with a Spanish post draft and `notification_status = pending`. The dashboard shows the latest observed trains and pending alert drafts. Actual posting to X is not enabled until X API credentials and a posting client are configured.
+`renfe-arrival-monitor` independently reads the official Renfe long-distance fleet JSON every 60 seconds. Each next-station arrival after 00:00 and before 06:00 local feed time creates one durable `renfe_arrival_alerts` row per train, station, and date, with a Spanish post draft. Both monitors use the deduplicated `x_post_outbox`; Renfe alert status is updated after the X API responds. The dashboard shows train arrival drafts and the posting history.
+
+The bus monitor checks each discovered departure around T−10 minutes (within its configured grace window), not only night services. After a fresh seat-map pull, it queues one post for that departure only when verified occupancy is over 70%. The post includes the route, occupancy and the ticket fare observed that day; if the operator does not expose a fare, it explicitly says the price was unavailable. X posts are stored under a unique event key so subsequent scans do not repeat them. A post with an uncertain API/network outcome is not automatically retried, to avoid accidental duplicates; review it manually first.

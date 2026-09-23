@@ -11,6 +11,7 @@ WorkingDirectory=/opt/bus-bot
 Environment=BUS_DATA_DIR=/srv/bus-bot-data
 Environment=RENFE_POLL_SECONDS=60
 Environment=RENFE_ARRIVAL_WINDOW_END_HOUR=6
+EnvironmentFile=-/etc/bus-bot/x.env
 ExecStart=/usr/bin/npm run monitor:renfe
 Restart=always
 RestartSec=20

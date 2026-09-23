@@ -230,7 +230,20 @@ export function openDatabase(path) {
       notification_text TEXT NOT NULL,
       notification_status TEXT NOT NULL DEFAULT 'pending' CHECK(notification_status IN ('pending', 'sent', 'failed')),
       notification_post_id TEXT,
-      notification_sent_at TEXT,
+      notification_sent_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS x_post_outbox (
+      id INTEGER PRIMARY KEY,
+      event_type TEXT NOT NULL CHECK(event_type IN ('bus_departure', 'renfe_arrival')),
+      event_key TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'sending', 'sent', 'failed')),
+      created_at TEXT NOT NULL,
+      claimed_at TEXT,
+      sent_at TEXT,
+      post_id TEXT,
+      error_message TEXT,
+      UNIQUE(event_type, event_key)
     );
     CREATE INDEX IF NOT EXISTS idx_observations_route_date
       ON observations(operator, origin, destination, service_date, observed_at);

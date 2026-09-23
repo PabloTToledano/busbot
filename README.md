@@ -40,7 +40,7 @@ Primero recoge el catálogo de salidas del día; el monitor usa esas expedicione
 npm run monitor -- --date 2026-09-14
 ```
 
-Cada 30 segundos localiza las salidas nocturnas entre T−10 y T−5 minutos, vuelve a abrir el checkout oficial y actualiza la misma fila SQLite con las plazas libres y ocupadas. `departure_checks` evita revisar dos veces una salida y recupera un intento interrumpido tras 15 minutos. Para una prueba única:
+Cada 30 segundos localiza las salidas descubiertas entre T−10 y T−5 minutos, vuelve a abrir el checkout oficial y actualiza la misma fila SQLite con las plazas libres y ocupadas. `departure_checks` evita revisar dos veces una salida y recupera un intento interrumpido tras 15 minutos. Si la ocupación verificada supera el 70%, prepara/publica un aviso en X con la ruta, ocupación y precio del billete observado ese día. Para una prueba única:
 
 ```powershell
 npm run monitor -- --date 2026-09-14 --once
@@ -62,9 +62,9 @@ La base está en `data/bus_occupancy.sqlite`:
 - `renfe_trains`: estado más reciente conocido de los trenes del feed de larga distancia.
 - `renfe_arrival_alerts`: llegadas nocturnas previstas y mensajes preparados para publicarlos en X.
 
-El monitor Renfe (`npm run monitor:renfe`) consulta cada 60 segundos el feed oficial [flotaLD.json](https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json), actualiza los trenes vistos y registra una sola alerta por tren, estación y fecha cuando `horaLlegadaSigEst` cae después de las 00:00 y antes de las 06:00 (hora local del feed). Conserva la hora prevista, el retraso informado como contexto, los códigos de estación, la evidencia JSON y el borrador preparado para publicar (`notification_status = pending`). El JSON sólo trae códigos de estación, no nombres.
+El monitor Renfe (`npm run monitor:renfe`) consulta cada 60 segundos el feed oficial [flotaLD.json](https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json), actualiza los trenes vistos y registra una sola alerta por tren, estación y fecha cuando `horaLlegadaSigEst` cae después de las 00:00 y antes de las 06:00 (hora local del feed). Conserva la hora prevista, el retraso informado como contexto, los códigos de estación, la evidencia JSON y el borrador preparado para publicar. El JSON sólo trae códigos de estación, no nombres.
 
-El servicio deja esos mensajes pendientes en SQLite. Para que se publiquen de verdad hace falta configurar más adelante credenciales y un cliente de X; este recolector no publica por sí mismo. El intervalo y el final de la franja nocturna pueden cambiarse con `RENFE_POLL_SECONDS` y `RENFE_ARRIVAL_WINDOW_END_HOUR`.
+Ambos monitores publican mediante la API v2 de X cuando `X_USER_ACCESS_TOKEN` contiene un token de usuario OAuth 2.0 con el permiso `tweet.write`. Sin credencial, dejan los borradores pendientes; el Bearer Token de aplicación no sirve para publicar. No guardes credenciales en el repositorio. Cada aviso se deduplica de forma persistente; un resultado de red incierto no se reintenta automáticamente para evitar duplicados. El intervalo y el final de la franja nocturna pueden cambiarse con `RENFE_POLL_SECONDS` y `RENFE_ARRIVAL_WINDOW_END_HOUR`.
 
 Una nueva ejecución actualiza esa misma fila, incluidas plazas libres, ocupadas, evidencia y paradas. No crea una fila adicional aunque el portal entregue un identificador de servicio sólo en una ejecución posterior.
 

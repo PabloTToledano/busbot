@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { openDatabase } from "./db.js";
+import { formatBusDemandMessage, occupancyPercent, publishPendingXPosts, queueXPost } from "./x-publisher.js";
 import { madridDateTimeEpoch, madridToday, shouldCheckDeparture } from "./time.js";
 
 function option(name, fallback = null) {
@@ -25,7 +26,7 @@ function runCollector(service) {
 
 export async function runDueChecks(db, { date = madridToday(), graceMinutes = 5, now = Date.now() } = {}) {
   const services = db.prepare(`SELECT service_key, operator, origin, destination, service_date, departure_time FROM observations
-    WHERE is_night_service = 1 AND service_date >= ? AND departure_time IS NOT NULL AND lower(operator) <> 'flixbus'`).all(date);
+    WHERE service_date >= ? AND departure_time IS NOT NULL AND lower(operator) <> 'flixbus'`).all(date);
   const due = services.filter((service) => shouldCheckDeparture({
     dueAt: madridDateTimeEpoch(service.service_date, service.departure_time) - 10 * 60_000, now, graceMinutes,
   }));
@@ -44,8 +45,26 @@ export async function runDueChecks(db, { date = madridToday(), graceMinutes = 5,
     const outcome = refresh.ok ? latest?.status ?? "error" : "error";
     const error = refresh.ok ? latest?.error_message ?? null : refresh.error;
     complete.run(timestamp(), outcome, error, service.service_key);
-    results.push({ ...service, status: outcome, seatsTotal: latest?.total_seats ?? null, seatsFree: latest?.free_seats ?? null, seatsOccupied: latest?.occupied_seats ?? null, ticketPriceCents: latest?.ticket_price_cents ?? null, ticketCurrency: latest?.ticket_currency ?? null, error });
+    const totalSeats = latest?.total_seats ?? null;
+    const occupiedSeats = latest?.occupied_seats ?? (totalSeats != null && latest?.free_seats != null ? totalSeats - latest.free_seats : null);
+    const rawOccupiedPercent = occupiedPercent(occupiedSeats, totalSeats);
+    const roundedOccupiedPercent = rawOccupiedPercent == null ? null : Math.round(rawOccupiedPercent * 10) / 10;
+    let postQueued = false;
+    if (outcome === "available" && rawOccupiedPercent != null && rawOccupiedPercent > 70) {
+      postQueued = queueXPost(db, {
+        eventType: "bus_departure",
+        eventKey: service.service_key,
+        message: formatBusDemandMessage(service, {
+          occupiedPercent: roundedOccupiedPercent,
+          ticketPriceCents: latest?.ticket_price_cents ?? null,
+          ticketCurrency: latest?.ticket_currency ?? "EUR",
+        }),
+      });
+    }
+    results.push({ ...service, status: outcome, seatsTotal: totalSeats, seatsFree: latest?.free_seats ?? null, seatsOccupied: occupiedSeats, occupiedPercent: roundedOccupiedPercent, postQueued, ticketPriceCents: latest?.ticket_price_cents ?? null, ticketCurrency: latest?.ticket_currency ?? null, error });
   }
+  const publishing = await publishPendingXPosts(db);
+  if (publishing.sent || publishing.failed) results.push({ xPublishing: publishing });
   return results;
 }
 
