@@ -60,11 +60,11 @@ La base está en `data/bus_occupancy.sqlite`:
 - `observations`: una fila por operador, origen, destino, fecha y hora de salida.
 - `observation_stops`: paradas de la observación.
 - `renfe_trains`: estado más reciente conocido de los trenes del feed de larga distancia.
-- `renfe_delay_alerts`: trenes que han superado 12 horas de retraso y la cola preparada para publicarlos en X.
+- `renfe_arrival_alerts`: llegadas nocturnas previstas y mensajes preparados para publicarlos en X.
 
-El monitor Renfe (`npm run monitor:renfe`) consulta cada 60 segundos el feed oficial [flotaLD.json](https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json), actualiza los trenes vistos y registra una alerta única por circulación y fecha cuando `ultRetraso` supera 720 minutos. Conserva el retraso, códigos de estación, hora estimada a la siguiente estación, evidencia JSON y texto preparado para publicar (`notification_status = pending`). Los tiempos y nombres de estación se muestran tal como los ofrece el feed; el JSON sólo trae códigos de estación.
+El monitor Renfe (`npm run monitor:renfe`) consulta cada 60 segundos el feed oficial [flotaLD.json](https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json), actualiza los trenes vistos y registra una sola alerta por tren, estación y fecha cuando `horaLlegadaSigEst` cae después de las 00:00 y antes de las 06:00 (hora local del feed). Conserva la hora prevista, el retraso informado como contexto, los códigos de estación, la evidencia JSON y el borrador preparado para publicar (`notification_status = pending`). El JSON sólo trae códigos de estación, no nombres.
 
-El servicio deja esos mensajes pendientes en SQLite. Para que se publiquen de verdad hace falta configurar más adelante credenciales y un cliente de X; este recolector no publica por sí mismo. El intervalo y el umbral pueden cambiarse con `RENFE_POLL_SECONDS` y `RENFE_DELAY_THRESHOLD_MINUTES`.
+El servicio deja esos mensajes pendientes en SQLite. Para que se publiquen de verdad hace falta configurar más adelante credenciales y un cliente de X; este recolector no publica por sí mismo. El intervalo y el final de la franja nocturna pueden cambiarse con `RENFE_POLL_SECONDS` y `RENFE_ARRIVAL_WINDOW_END_HOUR`.
 
 Una nueva ejecución actualiza esa misma fila, incluidas plazas libres, ocupadas, evidencia y paradas. No crea una fila adicional aunque el portal entregue un identificador de servicio sólo en una ejecución posterior.
 

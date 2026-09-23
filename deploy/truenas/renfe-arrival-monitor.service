@@ -1,5 +1,5 @@
 [Unit]
-Description=Renfe long-distance train delay monitor
+Description=Renfe overnight station arrival monitor
 Wants=network-online.target
 After=network-online.target
 
@@ -10,7 +10,7 @@ Group=busbot
 WorkingDirectory=/opt/bus-bot
 Environment=BUS_DATA_DIR=/srv/bus-bot-data
 Environment=RENFE_POLL_SECONDS=60
-Environment=RENFE_DELAY_THRESHOLD_MINUTES=720
+Environment=RENFE_ARRIVAL_WINDOW_END_HOUR=6
 ExecStart=/usr/bin/npm run monitor:renfe
 Restart=always
 RestartSec=20

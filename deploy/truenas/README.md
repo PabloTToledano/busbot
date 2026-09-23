@@ -26,9 +26,9 @@ install -m 0644 deploy/truenas/bus-occupancy-monitor.service /etc/systemd/system
 install -m 0644 deploy/truenas/bus-occupancy-dashboard.service /etc/systemd/system/
 install -m 0644 deploy/truenas/bus-occupancy-collector.service /etc/systemd/system/
 install -m 0644 deploy/truenas/bus-occupancy-collector.timer /etc/systemd/system/
-install -m 0644 deploy/truenas/renfe-delay-monitor.service /etc/systemd/system/
+install -m 0644 deploy/truenas/renfe-arrival-monitor.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now bus-occupancy-monitor bus-occupancy-dashboard bus-occupancy-collector.timer renfe-delay-monitor
+systemctl enable --now bus-occupancy-monitor bus-occupancy-dashboard bus-occupancy-collector.timer renfe-arrival-monitor
 ```
 
 Before the first evening monitor run, collect that day’s timetable once:
@@ -48,4 +48,4 @@ Add a proxy in the container **Proxies** card from host port `8787` to container
 
 The monitor deliberately excludes FlixBus. It never exposes a port, and no privileged mode, Docker nesting, or host networking is needed.
 
-`renfe-delay-monitor` independently reads the official Renfe long-distance fleet JSON every 60 seconds. A delay above 720 minutes creates one durable `renfe_delay_alerts` row per train circulation and operating date, with a Spanish post draft and `notification_status = pending`. The dashboard shows the latest observed trains and pending alert drafts. Actual posting to X is not enabled until X API credentials and a posting client are configured.
+`renfe-arrival-monitor` independently reads the official Renfe long-distance fleet JSON every 60 seconds. Each next-station arrival between 00:00 and 06:00 local feed time creates one durable `renfe_arrival_alerts` row per train, station, and date, with a Spanish post draft and `notification_status = pending`. The dashboard shows the latest observed trains and pending alert drafts. Actual posting to X is not enabled until X API credentials and a posting client are configured.

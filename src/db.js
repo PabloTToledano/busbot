@@ -214,10 +214,12 @@ export function openDatabase(path) {
       last_seen_at TEXT NOT NULL,
       raw_data TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS renfe_delay_alerts (
+    CREATE TABLE IF NOT EXISTS renfe_arrival_alerts (
       id INTEGER PRIMARY KEY,
+      alert_key TEXT NOT NULL UNIQUE,
       train_key TEXT NOT NULL,
       detected_at TEXT NOT NULL,
+      expected_arrival_at TEXT NOT NULL,
       delay_minutes INTEGER NOT NULL,
       commercial_code TEXT,
       circulation_code TEXT NOT NULL,
@@ -229,7 +231,6 @@ export function openDatabase(path) {
       notification_status TEXT NOT NULL DEFAULT 'pending' CHECK(notification_status IN ('pending', 'sent', 'failed')),
       notification_post_id TEXT,
       notification_sent_at TEXT,
-      UNIQUE(train_key)
     );
     CREATE INDEX IF NOT EXISTS idx_observations_route_date
       ON observations(operator, origin, destination, service_date, observed_at);

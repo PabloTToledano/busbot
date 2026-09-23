@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { openDatabase } from "./db.js";
 
 export const RENFE_FEED_URL = "https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json";
-export const DEFAULT_DELAY_THRESHOLD_MINUTES = 12 * 60;
+export const DEFAULT_ARRIVAL_WINDOW_END_HOUR = 6;
 
 function asText(value) {
   return value == null ? null : String(value).trim() || null;
@@ -25,21 +25,27 @@ export function renfeTrainKey(train) {
   return [circulationCode, corridor, serviceDate].join("|");
 }
 
-export function formatRenfeAlert(train, delayMinutes) {
-  const trainCode = asText(train.codComercial) ?? asText(train.codCirculacion) ?? "sin código";
-  const corridor = asText(train.corr);
-  const nextStop = asText(train.codEstSig);
-  const arrival = asText(train.horaLlegadaSigEst);
-  const hours = Math.floor(delayMinutes / 60);
-  const minutes = delayMinutes % 60;
-  const duration = minutes ? `${hours} h ${minutes} min` : `${hours} h`;
-  const progress = [nextStop ? `próxima estación ${nextStop}` : null, arrival ? `llegada estimada ${arrival.replace("T", " ")}` : null]
-    .filter(Boolean)
-    .join(", ");
-  return `🚆 Renfe: el tren ${trainCode}${corridor ? ` (${corridor})` : ""} registra ${duration} de retraso${progress ? `; ${progress}` : ""}.`;
+export function isAfterMidnightArrival(value, { endHour = DEFAULT_ARRIVAL_WINDOW_END_HOUR } = {}) {
+  const match = asText(value)?.match(/T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return false;
+  const [, hourText, minuteText, secondText = "0"] = match;
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  return hour >= 0 && hour < endHour && minute >= 0 && minute < 60 && second >= 0 && second < 60
+    && (hour > 0 || minute > 0 || second > 0);
 }
 
-export function recordRenfeFeed(db, feed, { now = new Date(), thresholdMinutes = DEFAULT_DELAY_THRESHOLD_MINUTES } = {}) {
+export function formatRenfeArrivalMessage(train) {
+  const trainCode = asText(train.codComercial) ?? asText(train.codCirculacion) ?? "sin código";
+  const corridor = asText(train.corr);
+  const arrival = asText(train.horaLlegadaSigEst);
+  const nextStop = asText(train.codEstSig);
+  const dayAndTime = arrival?.replace("T", " ") ?? "hora sin datos";
+  return `🚆 Renfe: el tren ${trainCode}${corridor ? ` (${corridor})` : ""} tiene prevista su llegada a la estación ${nextStop ?? "sin código"} el ${dayAndTime}, después de medianoche.`;
+}
+
+export function recordRenfeFeed(db, feed, { now = new Date(), windowEndHour = DEFAULT_ARRIVAL_WINDOW_END_HOUR } = {}) {
   if (!feed || !Array.isArray(feed.trenes)) throw new Error("El feed de Renfe no contiene una lista trenes válida.");
   const seenAt = now.toISOString();
   const upsert = db.prepare(`
@@ -64,16 +70,16 @@ export function recordRenfeFeed(db, feed, { now = new Date(), thresholdMinutes =
       last_seen_at = excluded.last_seen_at,
       raw_data = excluded.raw_data
   `);
-  const addAlert = db.prepare(`
-    INSERT OR IGNORE INTO renfe_delay_alerts (
-      train_key, detected_at, delay_minutes, commercial_code, circulation_code,
-      corridor_code, previous_station_code, next_station_code,
-      next_station_arrival_estimate, notification_text
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const addArrivalAlert = db.prepare(`
+    INSERT OR IGNORE INTO renfe_arrival_alerts (
+      alert_key, train_key, detected_at, expected_arrival_at, delay_minutes,
+      commercial_code, circulation_code, corridor_code, previous_station_code,
+      next_station_code, next_station_arrival_estimate, notification_text
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let saved = 0;
-  let alertsAdded = 0;
+  let arrivalsQueued = 0;
   db.exec("BEGIN IMMEDIATE");
   try {
     for (const train of feed.trenes) {
@@ -100,10 +106,16 @@ export function recordRenfeFeed(db, feed, { now = new Date(), thresholdMinutes =
       );
       saved += 1;
 
-      if (delayMinutes > thresholdMinutes) {
-        const result = addAlert.run(
+      const expectedArrivalAt = asText(train.horaLlegadaSigEst);
+      if (expectedArrivalAt && isAfterMidnightArrival(expectedArrivalAt, { endHour: windowEndHour })) {
+        const nextStationCode = asText(train.codEstSig) ?? "unknown-station";
+        const arrivalDate = expectedArrivalAt.slice(0, 10);
+        const alertKey = [circulationCode, asText(train.corr) ?? "unknown-corridor", arrivalDate, nextStationCode].join("|");
+        const result = addArrivalAlert.run(
+          alertKey,
           key,
           seenAt,
+          expectedArrivalAt,
           Math.trunc(delayMinutes),
           asText(train.codComercial),
           circulationCode,
@@ -111,9 +123,9 @@ export function recordRenfeFeed(db, feed, { now = new Date(), thresholdMinutes =
           asText(train.codEstAnt),
           asText(train.codEstSig),
           asText(train.horaLlegadaSigEst),
-          formatRenfeAlert(train, Math.trunc(delayMinutes)),
+          formatRenfeArrivalMessage(train),
         );
-        alertsAdded += Number(result.changes);
+        arrivalsQueued += Number(result.changes);
       }
     }
     db.exec("COMMIT");
@@ -121,7 +133,7 @@ export function recordRenfeFeed(db, feed, { now = new Date(), thresholdMinutes =
     db.exec("ROLLBACK");
     throw error;
   }
-  return { feedUpdatedAt: asText(feed.fechaActualizacion), trainsSaved: saved, alertsAdded };
+  return { feedUpdatedAt: asText(feed.fechaActualizacion), trainsSaved: saved, arrivalsQueued };
 }
 
 export async function collectRenfeFeed({ url = RENFE_FEED_URL, fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
@@ -137,16 +149,16 @@ export async function collectRenfeFeed({ url = RENFE_FEED_URL, fetchImpl = fetch
 
 async function main() {
   const pollSeconds = Number(process.env.RENFE_POLL_SECONDS ?? 60);
-  const thresholdMinutes = Number(process.env.RENFE_DELAY_THRESHOLD_MINUTES ?? DEFAULT_DELAY_THRESHOLD_MINUTES);
-  if (!Number.isFinite(pollSeconds) || pollSeconds < 10 || !Number.isFinite(thresholdMinutes) || thresholdMinutes < 1) {
-    throw new Error("RENFE_POLL_SECONDS debe ser >= 10 y RENFE_DELAY_THRESHOLD_MINUTES debe ser >= 1.");
+  const windowEndHour = Number(process.env.RENFE_ARRIVAL_WINDOW_END_HOUR ?? DEFAULT_ARRIVAL_WINDOW_END_HOUR);
+  if (!Number.isFinite(pollSeconds) || pollSeconds < 10 || !Number.isInteger(windowEndHour) || windowEndHour < 1 || windowEndHour > 24) {
+    throw new Error("RENFE_POLL_SECONDS debe ser >= 10 y RENFE_ARRIVAL_WINDOW_END_HOUR debe ser de 1 a 24.");
   }
   const db = openDatabase(resolve(process.env.BUS_DATA_DIR ?? "data", "bus_occupancy.sqlite"));
 
   const poll = async () => {
     try {
       const feed = await collectRenfeFeed();
-      const result = recordRenfeFeed(db, feed, { thresholdMinutes });
+      const result = recordRenfeFeed(db, feed, { windowEndHour });
       console.log(JSON.stringify({ observedAt: new Date().toISOString(), ...result }));
     } catch (error) {
       console.error(JSON.stringify({ observedAt: new Date().toISOString(), error: error.message }));
