@@ -1,0 +1,19 @@
+[Unit]
+Description=Renfe long-distance train delay monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=busbot
+Group=busbot
+WorkingDirectory=/opt/bus-bot
+Environment=BUS_DATA_DIR=/srv/bus-bot-data
+Environment=RENFE_POLL_SECONDS=60
+Environment=RENFE_DELAY_THRESHOLD_MINUTES=720
+ExecStart=/usr/bin/npm run monitor:renfe
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target

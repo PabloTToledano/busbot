@@ -6,6 +6,7 @@
   "scripts": {
     "collect": "node src/cli.js",
     "monitor": "node src/monitor.js",
+    "monitor:renfe": "node src/renfe-monitor.js",
     "dashboard": "node src/dashboard.js",
     "test": "node --test"
   },

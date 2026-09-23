@@ -198,6 +198,39 @@ export function openDatabase(path) {
       outcome TEXT,
       error_message TEXT
     );
+    CREATE TABLE IF NOT EXISTS renfe_trains (
+      train_key TEXT PRIMARY KEY,
+      commercial_code TEXT,
+      circulation_code TEXT NOT NULL,
+      corridor_code TEXT,
+      previous_station_code TEXT,
+      next_station_code TEXT,
+      previous_station_departure TEXT,
+      next_station_arrival_estimate TEXT,
+      delay_minutes INTEGER NOT NULL,
+      latitude REAL,
+      longitude REAL,
+      feed_updated_at TEXT,
+      last_seen_at TEXT NOT NULL,
+      raw_data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS renfe_delay_alerts (
+      id INTEGER PRIMARY KEY,
+      train_key TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      delay_minutes INTEGER NOT NULL,
+      commercial_code TEXT,
+      circulation_code TEXT NOT NULL,
+      corridor_code TEXT,
+      previous_station_code TEXT,
+      next_station_code TEXT,
+      next_station_arrival_estimate TEXT,
+      notification_text TEXT NOT NULL,
+      notification_status TEXT NOT NULL DEFAULT 'pending' CHECK(notification_status IN ('pending', 'sent', 'failed')),
+      notification_post_id TEXT,
+      notification_sent_at TEXT,
+      UNIQUE(train_key)
+    );
     CREATE INDEX IF NOT EXISTS idx_observations_route_date
       ON observations(operator, origin, destination, service_date, observed_at);
     CREATE INDEX IF NOT EXISTS idx_routes_operator

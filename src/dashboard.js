@@ -30,8 +30,24 @@ function rowsForDashboard() {
     FROM routes
     ORDER BY operator, origin, destination
   `).all();
+  const renfeTrains = db.prepare(`
+    SELECT commercial_code, circulation_code, corridor_code, previous_station_code,
+      next_station_code, next_station_arrival_estimate, delay_minutes, last_seen_at
+    FROM renfe_trains
+    ORDER BY delay_minutes DESC, last_seen_at DESC
+    LIMIT 100
+  `).all();
+  const renfeAlerts = db.prepare(`
+    SELECT id, train_key, detected_at, delay_minutes, commercial_code,
+      circulation_code, corridor_code, next_station_code,
+      next_station_arrival_estimate, notification_text, notification_status,
+      notification_sent_at
+    FROM renfe_delay_alerts
+    ORDER BY detected_at DESC
+    LIMIT 100
+  `).all();
   const byStatus = db.prepare("SELECT status, count(*) AS count FROM observations WHERE service_date = ? GROUP BY status").all(date);
-  return { date, routeCount, plannedRoutes, byStatus, services, generatedAt: new Date().toISOString() };
+  return { date, routeCount, plannedRoutes, byStatus, services, renfeTrains, renfeAlerts, generatedAt: new Date().toISOString() };
 }
 
 const page = `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bus monitor</title>
@@ -46,12 +62,15 @@ const page = `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="v
 </style><main><header><div><h1>Monitor de autobuses</h1><div class="muted" id="updated">Cargando…</div></div><div class="muted">Actualización automática: 30 s</div></header><div id="stats"></div>
 <section><h2>Próximas comprobaciones (T−10 min)</h2><table><thead><tr><th>Ruta</th><th>Salida</th><th>Pull previsto</th><th>Estado</th></tr></thead><tbody id="upcoming"></tbody></table></section>
 <section><h2>Rutas planificadas para cachear</h2><div class="controls"><input id="route-search" type="search" placeholder="Buscar operador, origen o destino…"><select id="operator-filter"><option value="">Todos los operadores</option></select></div><div class="muted" id="route-total"></div><table><thead><tr><th>Operador</th><th>Origen</th><th>Destino</th></tr></thead><tbody id="planned-routes"></tbody></table></section>
+<section><h2>Trenes Renfe observados</h2><p class="muted">Se consulta el feed oficial cada minuto. Retrasos superiores a 12 horas se guardan para enviar más adelante mediante el bot de X.</p><div class="muted" id="renfe-total"></div><table><thead><tr><th>Tren</th><th>Circulación</th><th>Trayecto</th><th>Próxima estación</th><th>Llegada estimada</th><th>Retraso</th><th>Visto</th></tr></thead><tbody id="renfe-trains"></tbody></table></section>
+<section><h2>Alertas Renfe pendientes para X</h2><table><thead><tr><th>Detectada</th><th>Tren</th><th>Retraso</th><th>Mensaje en cola</th><th>Estado</th></tr></thead><tbody id="renfe-alerts"></tbody></table></section>
 <section><h2>Lecturas de rutas nocturnas</h2><table><thead><tr><th>Operador</th><th>Ruta</th><th>Salida</th><th>Ocupación</th><th>Precio</th><th>Estado</th><th>Última lectura</th></tr></thead><tbody id="services"></tbody></table></section></main>
 <script>
 const fmt = (date) => date ? new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(date)) : '—';
 const esc = (value) => String(value ?? '—').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function price(row){ return row.ticket_price_cents == null ? '—' : (row.ticket_price_cents/100).toLocaleString('es-ES',{style:'currency',currency:row.ticket_currency||'EUR'}) + (row.price_reference_date ? ' · ref. '+row.price_reference_date : ''); }
 function state(row){ return '<span class="'+esc(row.status)+'">'+esc(row.status)+'</span>'; }
+function delayDuration(minutes){ return Math.floor(minutes/60)+' h '+String(minutes%60).padStart(2,'0')+' min'; }
 let latestData; const routeSearch=document.querySelector('#route-search'), operatorFilter=document.querySelector('#operator-filter');
 function renderRoutes(){ if(!latestData) return; const term=routeSearch.value.trim().toLocaleLowerCase('es'); const operator=operatorFilter.value; const routes=latestData.plannedRoutes.filter(r => (!operator || r.operator===operator) && (!term || [r.operator,r.origin,r.destination].join(' ').toLocaleLowerCase('es').includes(term))); document.querySelector('#route-total').textContent=routes.length+' de '+latestData.plannedRoutes.length+' rutas'; document.querySelector('#planned-routes').innerHTML=routes.map(r=>'<tr><td>'+esc(r.operator)+'</td><td>'+esc(r.origin)+'</td><td>'+esc(r.destination)+'</td></tr>').join('')||'<tr><td colspan="3">No hay rutas que coincidan con la búsqueda.</td></tr>'; }
 routeSearch.addEventListener('input',renderRoutes); operatorFilter.addEventListener('change',renderRoutes);
@@ -59,6 +78,9 @@ async function refresh(){ const data=await fetch('/api/dashboard').then(r=>r.jso
 document.querySelector('#stats').innerHTML=[['Rutas planeadas',data.routeCount],['Expediciones nocturnas',data.services.length],['Con ocupación',counts.available||0],['Llenas',counts.full_or_unavailable||0],['Con precio',data.services.filter(x=>x.ticket_price_cents!=null).length]].map(([k,v])=>'<div class="stat"><span class="muted">'+k+'</span><b>'+v+'</b></div>').join('');
 const upcoming=data.services.filter(x=>x.dueAt).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).slice(0,20); document.querySelector('#upcoming').innerHTML=upcoming.map(x=>'<tr><td>'+esc(x.origin)+' → '+esc(x.destination)+'</td><td>'+esc(x.service_date)+' '+esc(x.departure_time)+'</td><td>'+fmt(x.dueAt)+'</td><td>'+esc(x.checked_at?'comprobada':'pendiente')+'</td></tr>').join('')||'<tr><td colspan="4">Sin salidas planificadas.</td></tr>';
 const selected=operatorFilter.value; const operators=[...new Set(data.plannedRoutes.map(r=>r.operator))]; operatorFilter.innerHTML='<option value="">Todos los operadores</option>'+operators.map(x=>'<option>'+esc(x)+'</option>').join(''); operatorFilter.value=operators.includes(selected)?selected:''; latestData=data; renderRoutes();
+document.querySelector('#renfe-total').textContent=data.renfeTrains.length+' trenes en el último inventario (máx. 100)';
+document.querySelector('#renfe-trains').innerHTML=data.renfeTrains.map(t=>'<tr><td>'+esc(t.commercial_code||t.circulation_code)+'</td><td>'+esc(t.circulation_code)+'</td><td>'+esc(t.corridor_code)+'</td><td>'+esc(t.next_station_code)+'</td><td>'+esc(t.next_station_arrival_estimate?.replace('T',' '))+'</td><td class="'+(t.delay_minutes>720?'full_or_unavailable':'')+'">'+delayDuration(t.delay_minutes)+'</td><td>'+fmt(t.last_seen_at)+'</td></tr>').join('')||'<tr><td colspan="7">Aún no hay lecturas de Renfe.</td></tr>';
+document.querySelector('#renfe-alerts').innerHTML=data.renfeAlerts.map(a=>'<tr><td>'+fmt(a.detected_at)+'</td><td>'+esc(a.commercial_code||a.circulation_code)+' · '+esc(a.corridor_code)+'</td><td>'+delayDuration(a.delay_minutes)+'</td><td>'+esc(a.notification_text)+'</td><td>'+esc(a.notification_status)+'</td></tr>').join('')||'<tr><td colspan="5">No se han detectado trenes con más de 12 horas de retraso.</td></tr>';
 document.querySelector('#services').innerHTML=data.services.map(x=>'<tr><td>'+esc(x.operator)+'</td><td>'+esc(x.origin)+' → '+esc(x.destination)+'</td><td>'+esc(x.service_date)+' '+esc(x.departure_time)+'</td><td>'+esc(x.free_seats==null?'—':x.free_seats+'/'+x.total_seats+' libres')+'</td><td>'+price(x)+'</td><td>'+state(x)+'</td><td>'+fmt(x.observed_at)+'</td></tr>').join('')||'<tr><td colspan="7">Aún no hay lecturas.</td></tr>'; }
 refresh(); setInterval(refresh,30000);
 </script>`;
