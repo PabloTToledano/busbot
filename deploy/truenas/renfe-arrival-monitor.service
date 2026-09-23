@@ -7,7 +7,7 @@ After=network-online.target
 Type=simple
 User=busbot
 Group=busbot
-WorkingDirectory=/opt/bus-bot
+WorkingDirectory=/srv/bus-bot-app
 Environment=BUS_DATA_DIR=/srv/bus-bot-data
 Environment=RENFE_POLL_SECONDS=60
 Environment=RENFE_ARRIVAL_WINDOW_END_HOUR=6

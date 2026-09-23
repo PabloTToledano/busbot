@@ -15,13 +15,13 @@ curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dea
 echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' > /etc/apt/sources.list.d/nodesource.list
 apt-get update
 apt-get install -y nodejs
-useradd --system --create-home --home-dir /opt/bus-bot --shell /usr/sbin/nologin busbot
-git clone REPOSITORY_URL /opt/bus-bot
-cd /opt/bus-bot
+useradd --system --create-home --home-dir /var/lib/bus-bot --shell /usr/sbin/nologin busbot
+git clone REPOSITORY_URL /srv/bus-bot-app
+cd /srv/bus-bot-app
 npm ci
 npx playwright install-deps chromium
-chown -R busbot:busbot /opt/bus-bot /srv/bus-bot-data
-runuser -u busbot -- sh -c 'cd /opt/bus-bot && npx playwright install chromium'
+chown -R busbot:busbot /srv/bus-bot-app /srv/bus-bot-data
+runuser -u busbot -- sh -c 'cd /srv/bus-bot-app && npx playwright install chromium'
 install -m 0644 deploy/truenas/bus-occupancy-monitor.service /etc/systemd/system/
 install -m 0644 deploy/truenas/bus-occupancy-dashboard.service /etc/systemd/system/
 install -m 0644 deploy/truenas/bus-occupancy-collector.service /etc/systemd/system/

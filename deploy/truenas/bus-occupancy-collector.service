@@ -7,6 +7,6 @@ After=network-online.target
 Type=oneshot
 User=busbot
 Group=busbot
-WorkingDirectory=/opt/bus-bot
+WorkingDirectory=/srv/bus-bot-app
 Environment=BUS_DATA_DIR=/srv/bus-bot-data
 ExecStart=/usr/bin/npm run collect
