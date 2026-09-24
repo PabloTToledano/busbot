@@ -67,7 +67,7 @@ test("packs pending bus and Renfe alerts into as few posts as possible", async (
   const bodies = [];
   const result = await publishPendingXPosts(db, {
     token: "test-user-token",
-    now: () => new Date("2026-09-24T04:00:00"),
+    now: () => new Date("2026-09-24T02:00:00Z"),
     fetchImpl: async (_url, options) => {
       bodies.push(JSON.parse(options.body).text);
       return { ok: true, status: 201, json: async () => ({ data: { id: "one-bundled-post" } }) };
