@@ -37,10 +37,21 @@ export function isAfterMidnightArrival(value, { endHour = DEFAULT_ARRIVAL_WINDOW
     && (hour > 0 || minute > 0 || second > 0);
 }
 
-export function formatRenfeArrivalMessage(train) {
+export function delayedArrivalAt(scheduledArrival, delayMinutes) {
+  const arrival = asText(scheduledArrival);
+  const delay = asNumber(delayMinutes);
+  if (!arrival || delay == null) return null;
+  const match = arrival.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/);
+  if (!match) return null;
+  const [, date, hour, minute, second = "0"] = match;
+  const timestamp = Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), Number(hour), Number(minute), Number(second));
+  return new Date(timestamp + Math.trunc(delay) * 60_000).toISOString().replace(".000Z", "");
+}
+
+export function formatRenfeArrivalMessage(train, expectedArrivalAt = train.horaLlegadaSigEst) {
   const trainCode = asText(train.codComercial) ?? asText(train.codCirculacion) ?? "sin código";
   const corridor = asText(train.corr);
-  const arrival = asText(train.horaLlegadaSigEst);
+  const arrival = asText(expectedArrivalAt);
   const nextStop = asText(train.codEstSig);
   const dayAndTime = arrival?.replace("T", " ") ?? "hora sin datos";
   return `🚆 Renfe: el tren ${trainCode}${corridor ? ` (${corridor})` : ""} tiene prevista su llegada a la estación ${nextStop ?? "sin código"} el ${dayAndTime}, después de medianoche.`;
@@ -108,15 +119,20 @@ export function recordRenfeFeed(db, feed, { now = new Date(), windowEndHour = DE
       saved += 1;
 
       const expectedArrivalAt = asText(train.horaLlegadaSigEst);
-      if (expectedArrivalAt && isAfterMidnightArrival(expectedArrivalAt, { endHour: windowEndHour })) {
+      const delayedArrival = delayedArrivalAt(expectedArrivalAt, delayMinutes);
+      // Notify only if the accumulated delay itself moves an originally
+      // pre-midnight arrival into the after-midnight alert window.
+      if (expectedArrivalAt && delayedArrival
+        && !isAfterMidnightArrival(expectedArrivalAt, { endHour: windowEndHour })
+        && isAfterMidnightArrival(delayedArrival, { endHour: windowEndHour })) {
         const nextStationCode = asText(train.codEstSig) ?? "unknown-station";
-        const arrivalDate = expectedArrivalAt.slice(0, 10);
+        const arrivalDate = delayedArrival.slice(0, 10);
         const alertKey = [circulationCode, asText(train.corr) ?? "unknown-corridor", arrivalDate, nextStationCode].join("|");
         const result = addArrivalAlert.run(
           alertKey,
           key,
           seenAt,
-          expectedArrivalAt,
+          delayedArrival,
           Math.trunc(delayMinutes),
           asText(train.codComercial),
           circulationCode,
@@ -124,13 +140,13 @@ export function recordRenfeFeed(db, feed, { now = new Date(), windowEndHour = DE
           asText(train.codEstAnt),
           asText(train.codEstSig),
           asText(train.horaLlegadaSigEst),
-          formatRenfeArrivalMessage(train),
+          formatRenfeArrivalMessage(train, delayedArrival),
         );
         arrivalsQueued += Number(result.changes);
         queueXPost(db, {
           eventType: "renfe_arrival",
           eventKey: alertKey,
-          message: formatRenfeArrivalMessage(train),
+          message: formatRenfeArrivalMessage(train, delayedArrival),
           now,
         });
       }
