@@ -75,9 +75,30 @@ test("packs pending bus and Renfe alerts into as few posts as possible", async (
   assert.deepEqual(result, { sent: 1, failed: 0 });
   assert.equal(bodies.length, 1);
   assert.match(bodies[0], /Salamanca→Madrid 23:15 · 82% ocup\. · 15,99 €/);
-  assert.match(bodies[0], /04125\/1526→23002 2026-09-24 05:26/);
-  assert.match(bodies[0], /04126\/1527→23004 2026-09-24 05:42/);
+  assert.match(bodies[0], /04125\/1526→23002 05:26 24\/09/);
+  assert.match(bodies[0], /04126\/1527→23004 05:42 24\/09/);
   assert.equal(db.prepare("SELECT count(DISTINCT post_id) AS count FROM x_post_outbox WHERE status = 'sent'").get().count, 1);
+}));
+
+test("refreshes an expired OAuth token before posting", async () => withDb(async (db) => {
+  queueXPost(db, { eventType: "renfe_arrival", eventKey: "train-refresh", message: "🚆 04125→23002 2026-09-24 05:26" });
+  const requests = [];
+  const result = await publishPendingXPosts(db, {
+    token: "expired-access-token",
+    refreshToken: "old-refresh-token",
+    clientId: "public-client-id",
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (url.endsWith("/oauth2/token")) {
+        assert.equal(String(options.body), "grant_type=refresh_token&refresh_token=old-refresh-token&client_id=public-client-id");
+        return { ok: true, status: 200, json: async () => ({ access_token: "fresh-access-token", refresh_token: "rotated-refresh-token", expires_in: 7200 }) };
+      }
+      assert.equal(options.headers.authorization, "Bearer fresh-access-token");
+      return { ok: true, status: 201, json: async () => ({ data: { id: "tweet-refreshed" } }) };
+    },
+  });
+  assert.deepEqual(result, { sent: 1, failed: 0 });
+  assert.equal(requests.length, 2);
 }));
 
 test("leaves queued drafts untouched when the posting token is absent", async () => withDb(async (db) => {

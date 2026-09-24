@@ -1,5 +1,9 @@
+import { readFileSync, writeFileSync, renameSync } from "node:fs";
+
 const POST_ENDPOINT = "https://api.x.com/2/tweets";
+const TOKEN_ENDPOINT = "https://api.x.com/2/oauth2/token";
 const MAX_POST_WEIGHT = 260;
+let cachedTokenState;
 
 function compactMessage(post) {
   const bus = post.message.match(/^🚌 ¿Esta ruta merece un tren\? (.+?) → (.+?), salida (\S+)\. Ocupación: (.+?)%\. Billete: (.+?)\.$/);
@@ -8,7 +12,9 @@ function compactMessage(post) {
   }
   const renfe = post.message.match(/^🚆 Renfe: el tren (.+?)(?: \((.+?)\))? tiene prevista su llegada a la estación (.+?) el (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::\d{2})?, después de medianoche\.$/);
   if (post.event_type === "renfe_arrival" && renfe) {
-    return `🚆 ${renfe[1]}${renfe[2] ? `/${renfe[2]}` : ""}→${renfe[3]} ${renfe[4]} ${renfe[5]}`;
+    const [, train, corridor, station, date, time] = renfe;
+    const [, month, day] = date.match(/\d{4}-(\d{2})-(\d{2})/);
+    return `🚆 ${train}${corridor ? `/${corridor}` : ""}→${station} ${time} ${day}/${month}`;
   }
   return post.message.replace(/\s+/g, " ").trim();
 }
@@ -45,6 +51,69 @@ function packPosts(posts) {
   return packed;
 }
 
+function tokenStorePath() {
+  return process.env.X_TOKEN_STORE_PATH || null;
+}
+
+function loadTokenState() {
+  if (cachedTokenState) return cachedTokenState;
+  const storePath = tokenStorePath();
+  if (storePath) {
+    try {
+      cachedTokenState = JSON.parse(readFileSync(storePath, "utf8"));
+      return cachedTokenState;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  cachedTokenState = {
+    accessToken: process.env.X_USER_ACCESS_TOKEN || null,
+    refreshToken: process.env.X_REFRESH_TOKEN || null,
+    expiresAt: process.env.X_REFRESH_TOKEN ? 0 : Number.POSITIVE_INFINITY,
+  };
+  return cachedTokenState;
+}
+
+function saveTokenState(state) {
+  const storePath = tokenStorePath();
+  if (!storePath) return;
+  const temporaryPath = `${storePath}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, storePath);
+}
+
+async function refreshAccessToken(state, { fetchImpl, force = false, clientId = process.env.X_CLIENT_ID, cacheState = true } = {}) {
+  if (!state.refreshToken || !clientId) {
+    if (state.accessToken) return state.accessToken;
+    throw new Error("X_USER_ACCESS_TOKEN y X_REFRESH_TOKEN/X_CLIENT_ID no están configurados.");
+  }
+  if (!force && state.accessToken && state.expiresAt > Date.now() + 5 * 60_000) return state.accessToken;
+
+  const response = await fetchImpl(TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: state.refreshToken,
+      client_id: clientId,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.access_token || !payload.refresh_token) {
+    throw new Error(`No se pudo renovar la autorización de X (HTTP ${response.status}).`);
+  }
+  const nextState = {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+    expiresAt: Date.now() + Number(payload.expires_in || 7200) * 1000,
+  };
+  Object.assign(state, nextState);
+  saveTokenState(state);
+  if (cacheState) cachedTokenState = state;
+  return nextState.accessToken;
+}
+
 export function occupancyPercent(occupiedSeats, totalSeats) {
   if (!Number.isFinite(occupiedSeats) || !Number.isFinite(totalSeats) || totalSeats <= 0 || occupiedSeats < 0) return null;
   return occupiedSeats / totalSeats * 100;
@@ -67,11 +136,20 @@ export function queueXPost(db, { eventType, eventKey, message, now = new Date() 
 }
 
 export async function publishPendingXPosts(db, {
-  token = process.env.X_USER_ACCESS_TOKEN,
+  token,
+  refreshToken = process.env.X_REFRESH_TOKEN,
+  clientId = process.env.X_CLIENT_ID,
   fetchImpl = fetch,
   now = () => new Date(),
 } = {}) {
-  if (!token) return { skipped: "X_USER_ACCESS_TOKEN is not configured", sent: 0, failed: 0 };
+  const tokenState = { ...loadTokenState() };
+  const cacheState = token === undefined && refreshToken === process.env.X_REFRESH_TOKEN;
+  if (token !== undefined) tokenState.accessToken = token;
+  if (refreshToken) tokenState.refreshToken = refreshToken;
+  if (refreshToken && token !== undefined) tokenState.expiresAt = 0;
+  if (!tokenState.accessToken && !tokenState.refreshToken) {
+    return { skipped: "X_USER_ACCESS_TOKEN is not configured", sent: 0, failed: 0 };
+  }
 
   const pending = db.prepare(`
     SELECT id, event_type, event_key, message FROM x_post_outbox
@@ -94,12 +172,18 @@ export async function publishPendingXPosts(db, {
     const claimedKeys = new Set(claimedPosts.map((post) => post.id));
     const message = packPosts(claimedPosts).map((part) => part.message).join("\n");
     try {
-      const response = await fetchImpl(POST_ENDPOINT, {
+      let accessToken = await refreshAccessToken(tokenState, { fetchImpl, clientId, cacheState });
+      const request = () => fetchImpl(POST_ENDPOINT, {
         method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
         body: JSON.stringify({ text: message }),
         signal: AbortSignal.timeout(15_000),
       });
+      let response = await request();
+      if (response.status === 401 && tokenState.refreshToken) {
+        accessToken = await refreshAccessToken(tokenState, { fetchImpl, force: true, clientId, cacheState });
+        response = await request();
+      }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.data?.id) {
         const detail = payload?.detail ?? payload?.title ?? `X API respondió HTTP ${response.status}`;

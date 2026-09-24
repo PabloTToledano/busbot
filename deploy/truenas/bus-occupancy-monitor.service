@@ -9,6 +9,7 @@ User=busbot
 Group=busbot
 WorkingDirectory=/srv/bus-bot-app
 Environment=BUS_DATA_DIR=/srv/bus-bot-data
+Environment=X_TOKEN_STORE_PATH=/srv/bus-bot-data/x-token.json
 EnvironmentFile=-/etc/bus-bot/x.env
 ExecStart=/usr/bin/npm run monitor -- --poll-seconds 30
 Restart=always

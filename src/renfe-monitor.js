@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { openDatabase } from "./db.js";
-import { publishPendingXPosts, queueXPost } from "./x-publisher.js";
+import { queueXPost } from "./x-publisher.js";
 
 export const RENFE_FEED_URL = "https://tiempo-real.largorecorrido.renfe.com/renfe-visor/flotaLD.json";
 export const DEFAULT_ARRIVAL_WINDOW_END_HOUR = 6;
@@ -173,8 +173,7 @@ async function main() {
       for (const alert of pendingArrivals) {
         queueXPost(db, { eventType: "renfe_arrival", eventKey: alert.alert_key, message: alert.notification_text });
       }
-      const publishing = await publishPendingXPosts(db);
-      console.log(JSON.stringify({ observedAt: new Date().toISOString(), ...result, publishing }));
+      console.log(JSON.stringify({ observedAt: new Date().toISOString(), ...result }));
     } catch (error) {
       console.error(JSON.stringify({ observedAt: new Date().toISOString(), error: error.message }));
     }

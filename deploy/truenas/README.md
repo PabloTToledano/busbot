@@ -31,7 +31,7 @@ systemctl daemon-reload
 systemctl enable --now bus-occupancy-monitor bus-occupancy-dashboard bus-occupancy-collector.timer renfe-arrival-monitor
 ```
 
-To enable X publishing, create `/etc/bus-bot/x.env` outside the repository and set `X_USER_ACCESS_TOKEN` to an OAuth 2.0 **user** access token for the posting account, with the `tweet.write` scope (an app-only Bearer Token cannot publish). Keep that file restricted to administrators; never commit it or paste its contents into chat. Both monitors load this optional systemd environment file. Without it, qualifying messages remain queued and no tweet is sent.
+To enable X publishing, create `/etc/bus-bot/x.env` outside the repository with `X_USER_ACCESS_TOKEN`, `X_REFRESH_TOKEN`, and `X_CLIENT_ID` from an OAuth 2.0 **user** token for the posting account. It needs `tweet.write` and `offline.access` (an app-only Bearer Token cannot publish). Set `X_TOKEN_STORE_PATH=/srv/bus-bot-data/x-token.json`; the app refreshes short-lived access tokens and atomically saves each rotated refresh token there with owner-only permissions. Keep `/etc/bus-bot/x.env` restricted to administrators and the data directory restricted to `busbot`; never commit tokens or paste them into chat. Both monitors load this optional systemd environment file. Without it, qualifying messages remain queued and no tweet is sent.
 
 Before the first evening monitor run, collect that day’s timetable once:
 
