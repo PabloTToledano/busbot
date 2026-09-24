@@ -48,6 +48,38 @@ test("outbox deduplicates by event key and publishes once", async () => withDb(a
   assert.deepEqual(await publishPendingXPosts(db, { token: "test-user-token", fetchImpl: async () => { throw new Error("must not resend"); } }), { sent: 0, failed: 0 });
 }));
 
+test("packs pending bus and Renfe alerts into as few posts as possible", async () => withDb(async (db) => {
+  queueXPost(db, {
+    eventType: "bus_departure",
+    eventKey: "bus-1",
+    message: "🚌 ¿Esta ruta merece un tren? Salamanca → Madrid, salida 23:15. Ocupación: 82%. Billete: 15,99 €.",
+  });
+  queueXPost(db, {
+    eventType: "renfe_arrival",
+    eventKey: "train-1",
+    message: "🚆 Renfe: el tren 04125 (1526) tiene prevista su llegada a la estación 23002 el 2026-09-24 05:26:10, después de medianoche.",
+  });
+  queueXPost(db, {
+    eventType: "renfe_arrival",
+    eventKey: "train-2",
+    message: "🚆 Renfe: el tren 04126 (1527) tiene prevista su llegada a la estación 23004 el 2026-09-24 05:42:00, después de medianoche.",
+  });
+  const bodies = [];
+  const result = await publishPendingXPosts(db, {
+    token: "test-user-token",
+    fetchImpl: async (_url, options) => {
+      bodies.push(JSON.parse(options.body).text);
+      return { ok: true, status: 201, json: async () => ({ data: { id: "one-bundled-post" } }) };
+    },
+  });
+  assert.deepEqual(result, { sent: 1, failed: 0 });
+  assert.equal(bodies.length, 1);
+  assert.match(bodies[0], /Salamanca→Madrid 23:15 · 82% ocup\. · 15,99 €/);
+  assert.match(bodies[0], /04125\/1526→23002 2026-09-24 05:26/);
+  assert.match(bodies[0], /04126\/1527→23004 2026-09-24 05:42/);
+  assert.equal(db.prepare("SELECT count(DISTINCT post_id) AS count FROM x_post_outbox WHERE status = 'sent'").get().count, 1);
+}));
+
 test("leaves queued drafts untouched when the posting token is absent", async () => withDb(async (db) => {
   queueXPost(db, { eventType: "renfe_arrival", eventKey: "train|date|station", message: "Llegada" });
   assert.deepEqual(await publishPendingXPosts(db, { token: "" }), { skipped: "X_USER_ACCESS_TOKEN is not configured", sent: 0, failed: 0 });
