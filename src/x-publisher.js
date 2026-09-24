@@ -20,8 +20,26 @@ function compactMessage(post) {
 }
 
 function renfeArrivalTime(message) {
-  const match = message.match(/\bel (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::\d{2})?\b/);
-  return match ? new Date(`${match[1]}T${match[2]}:00`) : null;
+  const match = message.match(/\bel (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::(\d{2}))?\b/);
+  if (!match) return null;
+  const [, date, time, seconds = "00"] = match;
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const wallTime = Date.UTC(year, month - 1, day, hour, minute, Number(seconds));
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  });
+  let timestamp = wallTime;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(timestamp)).map(({ type, value }) => [type, value]));
+    const wallAtTimestamp = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+    timestamp = wallTime - (wallAtTimestamp - timestamp);
+  }
+  const result = new Date(timestamp);
+  const formatted = Object.fromEntries(formatter.formatToParts(result).map(({ type, value }) => [type, value]));
+  if (Number(formatted.hour) !== hour || Number(formatted.minute) !== minute) return null;
+  return result;
 }
 
 // Stay below X's post limit with a conservative weight for non-ASCII text.

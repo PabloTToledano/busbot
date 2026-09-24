@@ -89,7 +89,7 @@ test("does not publish stale Renfe arrival drafts", async () => withDb(async (db
   });
   const result = await publishPendingXPosts(db, {
     token: "test-user-token",
-    now: () => new Date("2026-09-24T10:35:00"),
+    now: () => new Date("2026-09-24T04:30:00Z"),
     fetchImpl: async () => { throw new Error("an expired arrival must not be posted"); },
   });
   assert.deepEqual(result, { sent: 0, failed: 1 });
