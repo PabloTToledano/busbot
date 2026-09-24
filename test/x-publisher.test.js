@@ -101,6 +101,25 @@ test("refreshes an expired OAuth token before posting", async () => withDb(async
   assert.equal(requests.length, 2);
 }));
 
+test("authenticates confidential OAuth refreshes with client credentials", async () => withDb(async (db) => {
+  queueXPost(db, { eventType: "renfe_arrival", eventKey: "train-confidential", message: "Llegada" });
+  const result = await publishPendingXPosts(db, {
+    token: "expired-access-token",
+    refreshToken: "old-refresh-token",
+    clientId: "confidential-client-id",
+    clientSecret: "client-secret",
+    fetchImpl: async (url, options) => {
+      if (url.endsWith("/oauth2/token")) {
+        assert.equal(options.headers.authorization, `Basic ${Buffer.from("confidential-client-id:client-secret").toString("base64")}`);
+        assert.equal(String(options.body), "grant_type=refresh_token&refresh_token=old-refresh-token");
+        return { ok: true, status: 200, json: async () => ({ access_token: "fresh-access-token", refresh_token: "rotated-refresh-token", expires_in: 7200 }) };
+      }
+      return { ok: true, status: 201, json: async () => ({ data: { id: "tweet-confidential" } }) };
+    },
+  });
+  assert.deepEqual(result, { sent: 1, failed: 0 });
+}));
+
 test("leaves queued drafts untouched when the posting token is absent", async () => withDb(async (db) => {
   queueXPost(db, { eventType: "renfe_arrival", eventKey: "train|date|station", message: "Llegada" });
   assert.deepEqual(await publishPendingXPosts(db, { token: "" }), { skipped: "X_USER_ACCESS_TOKEN is not configured", sent: 0, failed: 0 });

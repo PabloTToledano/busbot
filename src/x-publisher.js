@@ -82,21 +82,27 @@ function saveTokenState(state) {
   renameSync(temporaryPath, storePath);
 }
 
-async function refreshAccessToken(state, { fetchImpl, force = false, clientId = process.env.X_CLIENT_ID, cacheState = true } = {}) {
+async function refreshAccessToken(state, { fetchImpl, force = false, clientId = process.env.X_CLIENT_ID, clientSecret = process.env.X_CLIENT_SECRET, cacheState = true } = {}) {
   if (!state.refreshToken || !clientId) {
     if (state.accessToken) return state.accessToken;
     throw new Error("X_USER_ACCESS_TOKEN y X_REFRESH_TOKEN/X_CLIENT_ID no están configurados.");
   }
   if (!force && state.accessToken && state.expiresAt > Date.now() + 5 * 60_000) return state.accessToken;
 
+  const tokenBody = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: state.refreshToken,
+  });
+  const tokenHeaders = { "content-type": "application/x-www-form-urlencoded" };
+  if (clientSecret) {
+    tokenHeaders.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+  } else {
+    tokenBody.set("client_id", clientId);
+  }
   const response = await fetchImpl(TOKEN_ENDPOINT, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: state.refreshToken,
-      client_id: clientId,
-    }),
+    headers: tokenHeaders,
+    body: tokenBody,
     signal: AbortSignal.timeout(15_000),
   });
   const payload = await response.json().catch(() => ({}));
@@ -139,6 +145,7 @@ export async function publishPendingXPosts(db, {
   token,
   refreshToken = process.env.X_REFRESH_TOKEN,
   clientId = process.env.X_CLIENT_ID,
+  clientSecret = process.env.X_CLIENT_SECRET,
   fetchImpl = fetch,
   now = () => new Date(),
 } = {}) {
@@ -172,7 +179,7 @@ export async function publishPendingXPosts(db, {
     const claimedKeys = new Set(claimedPosts.map((post) => post.id));
     const message = packPosts(claimedPosts).map((part) => part.message).join("\n");
     try {
-      let accessToken = await refreshAccessToken(tokenState, { fetchImpl, clientId, cacheState });
+      let accessToken = await refreshAccessToken(tokenState, { fetchImpl, clientId, clientSecret, cacheState });
       const request = () => fetchImpl(POST_ENDPOINT, {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
@@ -181,7 +188,7 @@ export async function publishPendingXPosts(db, {
       });
       let response = await request();
       if (response.status === 401 && tokenState.refreshToken) {
-        accessToken = await refreshAccessToken(tokenState, { fetchImpl, force: true, clientId, cacheState });
+        accessToken = await refreshAccessToken(tokenState, { fetchImpl, force: true, clientId, clientSecret, cacheState });
         response = await request();
       }
       const payload = await response.json().catch(() => ({}));
