@@ -6,9 +6,14 @@ const MAX_POST_WEIGHT = 260;
 let cachedTokenState;
 
 function compactMessage(post) {
-  const bus = post.message.match(/^🚌 ¿Esta ruta merece un tren\? (.+?) → (.+?), salida (\S+)\. Ocupación: (.+?)%\. Billete: (.+?)\.$/);
+  const bus = post.message.match(/^🚌 (.+?) · (.+?) → (.+?), salida (\S+)\. Ocupación: (.+?)%\. Billete: (.+?)\.$/);
   if (post.event_type === "bus_departure" && bus) {
-    return `🚌 ${bus[1]}→${bus[2]} ${bus[3]} · ${bus[4]}% ocup. · ${bus[5]}`;
+    return `• ${bus[1]} · ${bus[2]}→${bus[3]} ${bus[4]} · ${bus[5]}% · ${bus[6]}`;
+  }
+  const legacyBus = post.message.match(/^🚌 ¿Esta ruta merece un tren\? (.+?) → (.+?), salida (\S+)\. Ocupación: (.+?)%\. Billete: (.+?)\.$/);
+  if (post.event_type === "bus_departure" && legacyBus) {
+    const operator = post.event_key?.split("|")[0] || "Operador";
+    return `• ${operator} · ${legacyBus[1]}→${legacyBus[2]} ${legacyBus[3]} · ${legacyBus[4]}% · ${legacyBus[5]}`;
   }
   const renfe = post.message.match(/^🚆 Renfe: el tren (.+?)(?: \((.+?)\))? tiene prevista su llegada a la estación (.+?) el (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::\d{2})?, después de medianoche\.$/);
   if (post.event_type === "renfe_arrival" && renfe) {
@@ -53,24 +58,31 @@ function packPosts(posts) {
   let message = "";
   for (const post of posts) {
     let line = compactMessage(post);
-    if (postWeight(line) > MAX_POST_WEIGHT) {
+    const closesWithBusTagline = [...current, post].some((item) => item.event_type === "bus_departure");
+    const tagline = closesWithBusTagline ? "\nPodrían ser trenes :(" : "";
+    const lineLimit = MAX_POST_WEIGHT - postWeight(tagline);
+    if (postWeight(line) > lineLimit) {
       let short = "";
       for (const character of [...line]) {
-        if (postWeight(short + character + "…") > MAX_POST_WEIGHT) break;
+        if (postWeight(short + character + "…") > lineLimit) break;
         short += character;
       }
       line = `${short}…`;
     }
     const next = message ? `${message}\n${line}` : line;
-    if (current.length && postWeight(next) > MAX_POST_WEIGHT) {
-      packed.push({ posts: current, message });
+    if (current.length && postWeight(`${next}${tagline}`) > MAX_POST_WEIGHT) {
+      const currentTagline = current.some((item) => item.event_type === "bus_departure") ? "\nPodrían ser trenes :(" : "";
+      packed.push({ posts: current, message: `${message}${currentTagline}` });
       current = [];
       message = "";
     }
     current.push(post);
     message = message ? `${message}\n${line}` : line;
   }
-  if (current.length) packed.push({ posts: current, message });
+  if (current.length) {
+    const tagline = current.some((item) => item.event_type === "bus_departure") ? "\nPodrían ser trenes :(" : "";
+    packed.push({ posts: current, message: `${message}${tagline}` });
+  }
   return packed;
 }
 
@@ -153,7 +165,7 @@ export function formatBusDemandMessage(service, { occupiedPercent, ticketPriceCe
     ? "no disponible en la consulta"
     : new Intl.NumberFormat("es-ES", { style: "currency", currency: ticketCurrency || "EUR" }).format(ticketPriceCents / 100);
   const percent = Number(occupiedPercent).toLocaleString("es-ES", { maximumFractionDigits: 1 });
-  return `🚌 ¿Esta ruta merece un tren? ${service.origin} → ${service.destination}, salida ${service.departure_time}. Ocupación: ${percent}%. Billete: ${price}.`;
+  return `🚌 ${service.operator || "Operador"} · ${service.origin} → ${service.destination}, salida ${service.departure_time}. Ocupación: ${percent}%. Billete: ${price}.`;
 }
 
 export function queueXPost(db, { eventType, eventKey, message, now = new Date() }) {

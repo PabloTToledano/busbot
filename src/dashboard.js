@@ -1,14 +1,49 @@
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { chmod, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import { openDatabase } from "./db.js";
+import { dashboardPage } from "./dashboard-page.js";
 import { madridDateTimeEpoch, madridToday } from "./time.js";
 
 const port = Number(process.env.DASHBOARD_PORT ?? 8787);
 const db = openDatabase(resolve(process.env.BUS_DATA_DIR ?? "data", "bus_occupancy.sqlite"));
 
+async function downloadDatabase(response) {
+  const snapshotPath = join(tmpdir(), `bus-occupancy-${randomUUID()}.sqlite`);
+  try {
+    // VACUUM INTO exports a consistent SQLite snapshot, including committed
+    // changes still in the WAL, without copying live database sidecar files.
+    db.prepare("VACUUM INTO ?").run(snapshotPath);
+    await chmod(snapshotPath, 0o600);
+    response.writeHead(200, {
+      "content-type": "application/vnd.sqlite3",
+      "content-disposition": `attachment; filename="bus-occupancy-${madridToday()}.sqlite"`,
+      "cache-control": "no-store",
+    });
+    await pipeline(createReadStream(snapshotPath), response);
+  } catch (error) {
+    console.error(`Database download failed: ${error.message}`);
+    if (!response.headersSent) {
+      response.writeHead(500, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+      response.end("No se pudo generar la copia de la base de datos.\n");
+    } else if (!response.destroyed) {
+      response.destroy(error);
+    }
+  } finally {
+    await unlink(snapshotPath).catch(() => {});
+  }
+}
+
 function rowsForDashboard() {
   const date = madridToday();
+  const historyStart = new Date(`${date}T12:00:00.000Z`);
+  historyStart.setUTCDate(historyStart.getUTCDate() - 13);
+  const historyFrom = historyStart.toISOString().slice(0, 10);
   const services = db.prepare(`
     SELECT o.operator, o.origin, o.destination, o.service_date, o.departure_time,
       o.status, o.total_seats, o.free_seats, o.occupied_seats,
@@ -24,6 +59,15 @@ function rowsForDashboard() {
       ? new Date(madridDateTimeEpoch(row.service_date, row.departure_time) - 10 * 60_000).toISOString()
       : null,
   }));
+  const history = db.prepare(`
+    SELECT operator, origin, destination, service_date, departure_time,
+      status, total_seats, free_seats, occupied_seats,
+      ticket_price_cents, ticket_currency, observed_at
+    FROM observations
+    WHERE service_date >= ? AND service_date <= ?
+    ORDER BY service_date DESC, observed_at DESC
+    LIMIT 2500
+  `).all(historyFrom, date);
   const routeCount = db.prepare("SELECT count(*) AS count FROM routes").get().count;
   const plannedRoutes = db.prepare(`
     SELECT operator, origin, destination
@@ -50,48 +94,26 @@ function rowsForDashboard() {
     SELECT event_type, event_key, message, status, created_at, sent_at, post_id, error_message
     FROM x_post_outbox ORDER BY id DESC LIMIT 100
   `).all();
+  const sentTweets = db.prepare(`
+    SELECT post_id, max(sent_at) AS sent_at, count(*) AS event_count,
+      group_concat(message, char(10)) AS message
+    FROM x_post_outbox
+    WHERE status = 'sent' AND post_id IS NOT NULL
+    GROUP BY post_id
+    ORDER BY sent_at DESC
+    LIMIT 100
+  `).all();
   const byStatus = db.prepare("SELECT status, count(*) AS count FROM observations WHERE service_date = ? GROUP BY status").all(date);
-  return { date, routeCount, plannedRoutes, byStatus, services, renfeTrains, renfeAlerts, xPosts, generatedAt: new Date().toISOString() };
+  return { date, historyFrom, routeCount, plannedRoutes, byStatus, services, history, renfeTrains, renfeAlerts, xPosts, sentTweets, generatedAt: new Date().toISOString() };
 }
 
-const page = `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bus monitor</title>
-<style>
-  :root { color-scheme: dark; --bg:#09121f; --panel:#101f32; --line:#25415d; --ink:#e9f2fb; --muted:#9db0c5; --accent:#46d7b0; --warn:#ffc857; --bad:#ff7b7b; }
-  * { box-sizing:border-box } body { margin:0; font:15px system-ui,sans-serif; background:var(--bg); color:var(--ink) } main { max-width:1500px; margin:auto; padding:28px }
-  header { display:flex; justify-content:space-between; gap:20px; align-items:end } h1 { margin:0; font-size:1.7rem } .muted { color:var(--muted) }
-  #stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:22px 0 } .stat,section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px } .stat b { display:block; font-size:1.55rem; margin-top:4px }
-  section { margin-top:16px; overflow:auto } h2 { margin:0 0 12px; font-size:1.05rem } table { width:100%; border-collapse:collapse; white-space:nowrap } th,td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line) } th { color:var(--muted); font-weight:600 } .available { color:var(--accent) } .full_or_unavailable { color:var(--bad) } .schedule_only { color:var(--warn) } .error { color:var(--bad) }
-  .controls { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px } input,select { background:#0b1726; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:inherit } input { min-width:260px; flex:1 }
-  @media(max-width:600px){main{padding:16px} table{font-size:.83rem} header{align-items:start;flex-direction:column}}
-</style><main><header><div><h1>Monitor de autobuses</h1><div class="muted" id="updated">Cargando…</div></div><div class="muted">Actualización automática: 30 s</div></header><div id="stats"></div>
-<section><h2>Próximas comprobaciones (T−10 min)</h2><table><thead><tr><th>Ruta</th><th>Salida</th><th>Pull previsto</th><th>Estado</th></tr></thead><tbody id="upcoming"></tbody></table></section>
-<section><h2>Rutas planificadas para cachear</h2><div class="controls"><input id="route-search" type="search" placeholder="Buscar operador, origen o destino…"><select id="operator-filter"><option value="">Todos los operadores</option></select></div><div class="muted" id="route-total"></div><table><thead><tr><th>Operador</th><th>Origen</th><th>Destino</th></tr></thead><tbody id="planned-routes"></tbody></table></section>
-<section><h2>Trenes Renfe observados</h2><p class="muted">Se consulta el feed oficial cada minuto. Las llegadas previstas después de las 00:00 y antes de las 06:00 se preparan para enviar mediante el bot de X.</p><div class="muted" id="renfe-total"></div><table><thead><tr><th>Tren</th><th>Circulación</th><th>Trayecto</th><th>Próxima estación</th><th>Llegada estimada</th><th>Retraso informado</th><th>Visto</th></tr></thead><tbody id="renfe-trains"></tbody></table></section>
-<section><h2>Avisos de llegadas nocturnas Renfe</h2><table><thead><tr><th>Registrada</th><th>Tren</th><th>Estación</th><th>Llegada prevista</th><th>Mensaje</th><th>Estado</th></tr></thead><tbody id="renfe-alerts"></tbody></table></section>
-<section><h2>Publicaciones de X (historial para evitar duplicados)</h2><table><thead><tr><th>Detectada</th><th>Tipo</th><th>Mensaje</th><th>Estado</th><th>Publicada</th><th>Referencia X</th></tr></thead><tbody id="x-posts"></tbody></table></section>
-<section><h2>Lecturas de autobuses</h2><table><thead><tr><th>Operador</th><th>Ruta</th><th>Salida</th><th>Ocupación</th><th>Precio</th><th>Estado</th><th>Última lectura</th></tr></thead><tbody id="services"></tbody></table></section></main>
-<script>
-const fmt = (date) => date ? new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(date)) : '—';
-const esc = (value) => String(value ?? '—').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function price(row){ return row.ticket_price_cents == null ? '—' : (row.ticket_price_cents/100).toLocaleString('es-ES',{style:'currency',currency:row.ticket_currency||'EUR'}) + (row.price_reference_date ? ' · ref. '+row.price_reference_date : ''); }
-function state(row){ return '<span class="'+esc(row.status)+'">'+esc(row.status)+'</span>'; }
-function delayDuration(minutes){ return minutes<0?minutes+' min':Math.floor(minutes/60)+' h '+String(minutes%60).padStart(2,'0')+' min'; }
-let latestData; const routeSearch=document.querySelector('#route-search'), operatorFilter=document.querySelector('#operator-filter');
-function renderRoutes(){ if(!latestData) return; const term=routeSearch.value.trim().toLocaleLowerCase('es'); const operator=operatorFilter.value; const routes=latestData.plannedRoutes.filter(r => (!operator || r.operator===operator) && (!term || [r.operator,r.origin,r.destination].join(' ').toLocaleLowerCase('es').includes(term))); document.querySelector('#route-total').textContent=routes.length+' de '+latestData.plannedRoutes.length+' rutas'; document.querySelector('#planned-routes').innerHTML=routes.map(r=>'<tr><td>'+esc(r.operator)+'</td><td>'+esc(r.origin)+'</td><td>'+esc(r.destination)+'</td></tr>').join('')||'<tr><td colspan="3">No hay rutas que coincidan con la búsqueda.</td></tr>'; }
-routeSearch.addEventListener('input',renderRoutes); operatorFilter.addEventListener('change',renderRoutes);
-async function refresh(){ const data=await fetch('/api/dashboard').then(r=>r.json()); const counts=Object.fromEntries(data.byStatus.map(x=>[x.status,x.count])); document.querySelector('#updated').textContent='Datos del '+data.date+' · generado '+fmt(data.generatedAt);
-document.querySelector('#stats').innerHTML=[['Rutas planeadas',data.routeCount],['Expediciones observadas',data.services.length],['Con ocupación',counts.available||0],['Llenas',counts.full_or_unavailable||0],['Con precio',data.services.filter(x=>x.ticket_price_cents!=null).length]].map(([k,v])=>'<div class="stat"><span class="muted">'+k+'</span><b>'+v+'</b></div>').join('');
-const upcoming=data.services.filter(x=>x.dueAt).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).slice(0,20); document.querySelector('#upcoming').innerHTML=upcoming.map(x=>'<tr><td>'+esc(x.origin)+' → '+esc(x.destination)+'</td><td>'+esc(x.service_date)+' '+esc(x.departure_time)+'</td><td>'+fmt(x.dueAt)+'</td><td>'+esc(x.checked_at?'comprobada':'pendiente')+'</td></tr>').join('')||'<tr><td colspan="4">Sin salidas planificadas.</td></tr>';
-const selected=operatorFilter.value; const operators=[...new Set(data.plannedRoutes.map(r=>r.operator))]; operatorFilter.innerHTML='<option value="">Todos los operadores</option>'+operators.map(x=>'<option>'+esc(x)+'</option>').join(''); operatorFilter.value=operators.includes(selected)?selected:''; latestData=data; renderRoutes();
-document.querySelector('#renfe-total').textContent=data.renfeTrains.length+' trenes en el último inventario (máx. 100)';
-document.querySelector('#renfe-trains').innerHTML=data.renfeTrains.map(t=>'<tr><td>'+esc(t.commercial_code||t.circulation_code)+'</td><td>'+esc(t.circulation_code)+'</td><td>'+esc(t.corridor_code)+'</td><td>'+esc(t.next_station_code)+'</td><td>'+esc(t.next_station_arrival_estimate?.replace('T',' '))+'</td><td>'+delayDuration(t.delay_minutes)+'</td><td>'+fmt(t.last_seen_at)+'</td></tr>').join('')||'<tr><td colspan="7">Aún no hay lecturas de Renfe.</td></tr>';
-document.querySelector('#renfe-alerts').innerHTML=data.renfeAlerts.map(a=>'<tr><td>'+fmt(a.detected_at)+'</td><td>'+esc(a.commercial_code||a.circulation_code)+' · '+esc(a.corridor_code)+'</td><td>'+esc(a.next_station_code)+'</td><td>'+esc(a.expected_arrival_at.replace('T',' '))+'</td><td>'+esc(a.notification_text)+'</td><td>'+esc(a.notification_status)+'</td></tr>').join('')||'<tr><td colspan="6">No hay llegadas nocturnas en cola.</td></tr>';
-document.querySelector('#x-posts').innerHTML=data.xPosts.map(p=>'<tr><td>'+fmt(p.created_at)+'</td><td>'+esc(p.event_type==='bus_departure'?'Autobús':'Renfe')+'</td><td>'+esc(p.message)+'</td><td>'+esc(p.status)+(p.error_message?' · '+esc(p.error_message):'')+'</td><td>'+fmt(p.sent_at)+'</td><td>'+esc(p.post_id)+'</td></tr>').join('')||'<tr><td colspan="6">Aún no hay mensajes en cola.</td></tr>';
-document.querySelector('#services').innerHTML=data.services.map(x=>'<tr><td>'+esc(x.operator)+'</td><td>'+esc(x.origin)+' → '+esc(x.destination)+'</td><td>'+esc(x.service_date)+' '+esc(x.departure_time)+'</td><td>'+esc(x.free_seats==null?'—':x.free_seats+'/'+x.total_seats+' libres')+'</td><td>'+price(x)+'</td><td>'+state(x)+'</td><td>'+fmt(x.observed_at)+'</td></tr>').join('')||'<tr><td colspan="7">Aún no hay lecturas.</td></tr>'; }
-refresh(); setInterval(refresh,30000);
-</script>`;
+const page = dashboardPage;
 
 createServer((request, response) => {
+  if (request.method === "GET" && new URL(request.url, "http://localhost").pathname === "/api/database.sqlite") {
+    void downloadDatabase(response);
+    return;
+  }
   if (request.url === "/api/dashboard") {
     response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     response.end(JSON.stringify(rowsForDashboard()));

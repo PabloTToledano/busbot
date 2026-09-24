@@ -15,9 +15,9 @@ async function withDb(run) {
 
 test("bus post includes route, verified occupancy percentage, and fare", () => {
   assert.match(formatBusDemandMessage(
-    { origin: "Salamanca", destination: "Madrid", departure_time: "23:15" },
+    { operator: "Alsa", origin: "Salamanca", destination: "Madrid", departure_time: "23:15" },
     { occupiedPercent: 72, ticketPriceCents: 1599, ticketCurrency: "EUR" },
-  ), /Salamanca → Madrid.*72%.*15,99/);
+  ), /Alsa · Salamanca → Madrid.*72%.*15,99/);
 });
 
 test("occupancy threshold is strictly greater than 70 percent", () => {
@@ -27,7 +27,7 @@ test("occupancy threshold is strictly greater than 70 percent", () => {
 });
 
 test("outbox deduplicates by event key and publishes once", async () => withDb(async (db) => {
-  const post = { eventType: "bus_departure", eventKey: "alsa|salamanca|madrid|2026-10-01|23:15", message: "Prueba de contenido" };
+  const post = { eventType: "renfe_arrival", eventKey: "train-test", message: "Prueba de contenido" };
   assert.equal(queueXPost(db, post), true);
   assert.equal(queueXPost(db, post), false);
   let requests = 0;
@@ -52,7 +52,12 @@ test("packs pending bus and Renfe alerts into as few posts as possible", async (
   queueXPost(db, {
     eventType: "bus_departure",
     eventKey: "bus-1",
-    message: "🚌 ¿Esta ruta merece un tren? Salamanca → Madrid, salida 23:15. Ocupación: 82%. Billete: 15,99 €.",
+    message: "🚌 Alsa · Salamanca → Madrid, salida 23:15. Ocupación: 82%. Billete: 15,99 €.",
+  });
+  queueXPost(db, {
+    eventType: "bus_departure",
+    eventKey: "bus-2",
+    message: "🚌 Socibus · Madrid → Sevilla, salida 23:30. Ocupación: 89,6%. Billete: 36,85 €.",
   });
   queueXPost(db, {
     eventType: "renfe_arrival",
@@ -75,9 +80,11 @@ test("packs pending bus and Renfe alerts into as few posts as possible", async (
   });
   assert.deepEqual(result, { sent: 1, failed: 0 });
   assert.equal(bodies.length, 1);
-  assert.match(bodies[0], /Salamanca→Madrid 23:15 · 82% ocup\. · 15,99 €/);
+  assert.match(bodies[0], /• Alsa · Salamanca→Madrid 23:15 · 82% · 15,99 €/);
+  assert.match(bodies[0], /• Socibus · Madrid→Sevilla 23:30 · 89,6% · 36,85 €/);
   assert.match(bodies[0], /04125\/1526→23002 05:26 24\/09/);
   assert.match(bodies[0], /04126\/1527→23004 05:42 24\/09/);
+  assert.match(bodies[0], /Podrían ser trenes :\($/);
   assert.equal(db.prepare("SELECT count(DISTINCT post_id) AS count FROM x_post_outbox WHERE status = 'sent'").get().count, 1);
 }));
 
