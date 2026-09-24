@@ -19,6 +19,11 @@ function compactMessage(post) {
   return post.message.replace(/\s+/g, " ").trim();
 }
 
+function renfeArrivalTime(message) {
+  const match = message.match(/\bel (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?::\d{2})?\b/);
+  return match ? new Date(`${match[1]}T${match[2]}:00`) : null;
+}
+
 // Stay below X's post limit with a conservative weight for non-ASCII text.
 function postWeight(text) {
   return [...text].reduce((sum, character) => sum + (character.codePointAt(0) > 0x7f ? 2 : 1), 0);
@@ -154,10 +159,6 @@ export async function publishPendingXPosts(db, {
   if (token !== undefined) tokenState.accessToken = token;
   if (refreshToken) tokenState.refreshToken = refreshToken;
   if (refreshToken && token !== undefined) tokenState.expiresAt = 0;
-  if (!tokenState.accessToken && !tokenState.refreshToken) {
-    return { skipped: "X_USER_ACCESS_TOKEN is not configured", sent: 0, failed: 0 };
-  }
-
   const pending = db.prepare(`
     SELECT id, event_type, event_key, message FROM x_post_outbox
     WHERE status = 'pending' ORDER BY id
@@ -172,7 +173,27 @@ export async function publishPendingXPosts(db, {
   let sentCount = 0;
   let failedCount = 0;
 
-  for (const bundle of packPosts(pending)) {
+  const currentTime = now();
+  const expirePending = db.prepare(`
+    UPDATE x_post_outbox SET status = 'failed', error_message = ? WHERE id = ? AND status = 'pending'
+  `);
+  const publishable = [];
+  for (const post of pending) {
+    const arrivalTime = post.event_type === "renfe_arrival" ? renfeArrivalTime(post.message) : null;
+    if (arrivalTime && arrivalTime <= currentTime) {
+      const reason = `Aviso caducado: la llegada prevista (${arrivalTime.toISOString()}) ya pasó.`;
+      expirePending.run(reason, post.id);
+      updateRenfe.run("failed", null, null, post.event_key);
+      failedCount += 1;
+    } else {
+      publishable.push(post);
+    }
+  }
+  if (!tokenState.accessToken && !tokenState.refreshToken) {
+    return { skipped: "X_USER_ACCESS_TOKEN is not configured", sent: sentCount, failed: failedCount };
+  }
+
+  for (const bundle of packPosts(publishable)) {
     const claimedAt = now().toISOString();
     const claimedPosts = bundle.posts.filter((post) => claim.run(claimedAt, post.id).changes === 1);
     if (!claimedPosts.length) continue;

@@ -67,6 +67,7 @@ test("packs pending bus and Renfe alerts into as few posts as possible", async (
   const bodies = [];
   const result = await publishPendingXPosts(db, {
     token: "test-user-token",
+    now: () => new Date("2026-09-24T04:00:00"),
     fetchImpl: async (_url, options) => {
       bodies.push(JSON.parse(options.body).text);
       return { ok: true, status: 201, json: async () => ({ data: { id: "one-bundled-post" } }) };
@@ -78,6 +79,22 @@ test("packs pending bus and Renfe alerts into as few posts as possible", async (
   assert.match(bodies[0], /04125\/1526→23002 05:26 24\/09/);
   assert.match(bodies[0], /04126\/1527→23004 05:42 24\/09/);
   assert.equal(db.prepare("SELECT count(DISTINCT post_id) AS count FROM x_post_outbox WHERE status = 'sent'").get().count, 1);
+}));
+
+test("does not publish stale Renfe arrival drafts", async () => withDb(async (db) => {
+  queueXPost(db, {
+    eventType: "renfe_arrival",
+    eventKey: "stale-train|2026-09-24|65402",
+    message: "🚆 Renfe: el tren 18120 (LMD2501) tiene prevista su llegada a la estación 65402 el 2026-09-24 05:58:00, después de medianoche.",
+  });
+  const result = await publishPendingXPosts(db, {
+    token: "test-user-token",
+    now: () => new Date("2026-09-24T10:35:00"),
+    fetchImpl: async () => { throw new Error("an expired arrival must not be posted"); },
+  });
+  assert.deepEqual(result, { sent: 0, failed: 1 });
+  assert.equal(db.prepare("SELECT status FROM x_post_outbox").get().status, "failed");
+  assert.match(db.prepare("SELECT error_message FROM x_post_outbox").get().error_message, /caducado/i);
 }));
 
 test("refreshes an expired OAuth token before posting", async () => withDb(async (db) => {
